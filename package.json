@@ -4,6 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "build": "cd backend && npm install && npm run build",
+    "start:prod": "cd backend && node dist/main",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
