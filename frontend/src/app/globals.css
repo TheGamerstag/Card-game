@@ -1,0 +1,167 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    background-color: #07080c;
+    color: #f4f4f5;
+    font-family: 'Outfit', sans-serif;
+  }
+}
+
+/* Ambient page background */
+.page-bg {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(245, 158, 11, 0.12), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(16, 185, 129, 0.08), transparent),
+    radial-gradient(ellipse 50% 30% at 0% 100%, rgba(245, 158, 11, 0.06), transparent),
+    #07080c;
+}
+
+.page-bg-mesh::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse at center, black 20%, transparent 75%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Brand typography */
+.brand-text {
+  background: linear-gradient(135deg, #fcd34d 0%, #f59e0b 45%, #d97706 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.brand-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.625rem;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(217, 119, 6, 0.08));
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.15);
+}
+
+.gamers-tag {
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 20px rgba(245, 158, 11, 0.25);
+}
+
+/* Glassmorphism panel styles */
+.glass-panel {
+  background: rgba(12, 14, 20, 0.82);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.glass-panel-elevated {
+  background: rgba(16, 18, 26, 0.9);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(245, 158, 11, 0.12);
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(245, 158, 11, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Primary action button */
+.btn-primary {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  box-shadow: 0 4px 20px rgba(245, 158, 11, 0.35);
+  transition: all 0.2s ease;
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  box-shadow: 0 6px 28px rgba(245, 158, 11, 0.45);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active {
+  transform: scale(0.98) translateY(0);
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(245, 158, 11, 0.2);
+}
+
+/* Feature pill badges */
+.feature-pill {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.15);
+  color: #fcd34d;
+}
+
+/* Card table felt gradient styling */
+.felt-table {
+  background:
+    radial-gradient(ellipse at center, #145c38 0%, #0a3520 55%, #061f14 100%);
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.85);
+  border-top: 1px solid rgba(245, 158, 11, 0.08);
+}
+
+.felt-table::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.03) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+/* Neon glow animations for cards */
+.glow-spades {
+  box-shadow: 0 0 15px rgba(167, 139, 250, 0.45);
+  border-color: rgba(167, 139, 250, 0.7);
+}
+.glow-hearts {
+  box-shadow: 0 0 15px rgba(244, 63, 94, 0.45);
+  border-color: rgba(244, 63, 94, 0.7);
+}
+.glow-diamonds {
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.45);
+  border-color: rgba(56, 189, 248, 0.7);
+}
+.glow-clubs {
+  box-shadow: 0 0 15px rgba(52, 211, 153, 0.45);
+  border-color: rgba(52, 211, 153, 0.7);
+}
+
+/* Nav tab active state */
+.nav-tab-active {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  color: #fcd34d;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(245, 158, 11, 0.15);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 158, 11, 0.25);
+}

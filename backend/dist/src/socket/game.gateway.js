@@ -1,0 +1,458 @@
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.GameGateway = void 0;
+const websockets_1 = require("@nestjs/websockets");
+const socket_io_1 = require("socket.io");
+const game_engine_1 = require("../game/game.engine");
+const bot_ai_1 = require("../game/bot.ai");
+const prisma_service_1 = require("../prisma.service");
+const common_1 = require("@nestjs/common");
+let GameGateway = class GameGateway {
+    prisma;
+    server;
+    rooms = {};
+    activeClients = {};
+    constructor(prisma) {
+        this.prisma = prisma;
+    }
+    handleConnection(client) {
+        console.log(`Client connected: ${client.id}`);
+    }
+    handleDisconnect(client) {
+        console.log(`Client disconnected: ${client.id}`);
+        const clientData = this.activeClients[client.id];
+        if (clientData && clientData.roomId) {
+            this.handleLeaveRoom(client, clientData.roomId);
+        }
+        delete this.activeClients[client.id];
+    }
+    async handleRegisterGuest(client, data) {
+        const avatar = `https://api.dicebear.com/7.x/bottts/svg?seed=${data.username}`;
+        const user = await this.prisma.user.upsert({
+            where: { username: data.username },
+            update: {},
+            create: {
+                username: data.username,
+                avatar,
+            },
+        });
+        this.activeClients[client.id] = {
+            userId: user.id,
+            username: user.username,
+        };
+        client.emit('registered', user);
+    }
+    handleJoinRoom(client, data) {
+        const { roomId, username } = data;
+        const clientData = this.activeClients[client.id] || { userId: client.id, username };
+        clientData.roomId = roomId;
+        this.activeClients[client.id] = clientData;
+        client.join(roomId);
+        if (!this.rooms[roomId]) {
+            this.rooms[roomId] = {
+                roomId,
+                players: [],
+                status: 'LOBBY',
+                deck: [],
+                currentTurn: 0,
+                currentSuit: null,
+                trickCards: [],
+                loserId: null,
+                winnerOrder: [],
+            };
+        }
+        const room = this.rooms[roomId];
+        if (!room.players.some(p => p.id === client.id)) {
+            room.players.push({
+                id: client.id,
+                username: clientData.username,
+                avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${clientData.username}`,
+                cards: [],
+                isReady: false,
+                leftGame: false,
+            });
+        }
+        this.server.to(roomId).emit('roomUpdated', room);
+        this.server.to(roomId).emit('chatMessage', {
+            sender: 'System',
+            text: `${clientData.username} has joined the room.`,
+        });
+    }
+    handleLeaveRoom(client, roomId) {
+        client.leave(roomId);
+        const room = this.rooms[roomId];
+        if (room) {
+            const pIndex = room.players.findIndex(p => p.id === client.id);
+            if (pIndex !== -1) {
+                const username = room.players[pIndex].username;
+                room.players.splice(pIndex, 1);
+                this.server.to(roomId).emit('chatMessage', {
+                    sender: 'System',
+                    text: `${username} has left the room.`,
+                });
+                if (room.players.length === 0) {
+                    delete this.rooms[roomId];
+                }
+                else {
+                    this.server.to(roomId).emit('roomUpdated', room);
+                }
+            }
+        }
+        if (this.activeClients[client.id]) {
+            delete this.activeClients[client.id].roomId;
+        }
+    }
+    handleToggleReady(client) {
+        const clientData = this.activeClients[client.id];
+        if (!clientData || !clientData.roomId)
+            return;
+        const room = this.rooms[clientData.roomId];
+        if (!room)
+            return;
+        const player = room.players.find(p => p.id === client.id);
+        if (player) {
+            player.isReady = !player.isReady;
+            this.server.to(clientData.roomId).emit('roomUpdated', room);
+        }
+    }
+    handleStartBotGame(client, data) {
+        const clientData = this.activeClients[client.id];
+        if (!clientData)
+            return;
+        const totalPlayers = data?.totalPlayers ?? 0;
+        if (totalPlayers < 3 || totalPlayers > 6) {
+            client.emit('error', 'Choose 3 to 6 total players for a bot game.');
+            return;
+        }
+        if (clientData.roomId) {
+            this.handleLeaveRoom(client, clientData.roomId);
+        }
+        const roomId = `BOT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+        clientData.roomId = roomId;
+        this.activeClients[client.id] = clientData;
+        client.join(roomId);
+        const humanPlayer = {
+            id: client.id,
+            username: clientData.username,
+            avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${clientData.username}`,
+            cards: [],
+            isReady: true,
+            leftGame: false,
+            isBot: false,
+        };
+        const botCount = totalPlayers - 1;
+        const bots = Array.from({ length: botCount }, (_, i) => ({
+            id: `bot-${roomId}-${i}`,
+            username: bot_ai_1.BOT_NAMES[i] || `CPU ${i + 1}`,
+            avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=bot${i}`,
+            cards: [],
+            isReady: true,
+            leftGame: false,
+            isBot: true,
+        }));
+        this.rooms[roomId] = {
+            roomId,
+            players: [humanPlayer, ...bots],
+            status: 'LOBBY',
+            deck: [],
+            currentTurn: 0,
+            currentSuit: null,
+            trickCards: [],
+            loserId: null,
+            winnerOrder: [],
+            isBotRoom: true,
+        };
+        const room = this.rooms[roomId];
+        (0, game_engine_1.dealCards)(room.players);
+        room.status = 'PLAYING';
+        room.winnerOrder = [];
+        room.loserId = null;
+        room.trickCards = [];
+        room.currentSuit = null;
+        const starterIdx = (0, game_engine_1.findAceOfSpadesPlayerIndex)(room.players);
+        room.currentTurn = starterIdx !== -1 ? starterIdx : 0;
+        this.server.to(roomId).emit('roomUpdated', room);
+        this.server.to(roomId).emit('chatMessage', {
+            sender: 'System',
+            text: `Bot game started with ${totalPlayers} players (${botCount} CPU). Ace of Spades must lead.`,
+        });
+        void this.processBotTurns(roomId);
+    }
+    handleStartGame(client) {
+        const clientData = this.activeClients[client.id];
+        if (!clientData || !clientData.roomId)
+            return;
+        const room = this.rooms[clientData.roomId];
+        if (!room)
+            return;
+        if (room.players.length < 3) {
+            client.emit('error', 'Requires at least 3 players to start!');
+            return;
+        }
+        (0, game_engine_1.dealCards)(room.players);
+        room.status = 'PLAYING';
+        room.winnerOrder = [];
+        room.loserId = null;
+        room.trickCards = [];
+        room.currentSuit = null;
+        const starterIdx = (0, game_engine_1.findAceOfSpadesPlayerIndex)(room.players);
+        room.currentTurn = starterIdx !== -1 ? starterIdx : 0;
+        this.server.to(clientData.roomId).emit('roomUpdated', room);
+        this.server.to(clientData.roomId).emit('chatMessage', {
+            sender: 'System',
+            text: 'Game has started! Ace of Spades must lead.',
+        });
+    }
+    async handlePlayCard(client, card) {
+        const clientData = this.activeClients[client.id];
+        if (!clientData || !clientData.roomId)
+            return;
+        const room = this.rooms[clientData.roomId];
+        if (!room)
+            return;
+        const valResult = (0, game_engine_1.isValidPlay)(room, client.id, card);
+        if (!valResult.valid) {
+            client.emit('error', valResult.reason || 'Invalid Play');
+            return;
+        }
+        const trickRes = this.executePlay(clientData.roomId, client.id, card);
+        if (!trickRes) {
+            client.emit('error', 'Invalid Play');
+            return;
+        }
+        if (trickRes.gameOver && room.loserId) {
+            await this.persistGameResults(room);
+            return;
+        }
+        void this.processBotTurns(clientData.roomId);
+    }
+    handleSendMessage(client, message) {
+        const clientData = this.activeClients[client.id];
+        if (!clientData || !clientData.roomId)
+            return;
+        this.server.to(clientData.roomId).emit('chatMessage', {
+            sender: clientData.username,
+            text: message,
+        });
+    }
+    handleEmojiReaction(client, emoji) {
+        const clientData = this.activeClients[client.id];
+        if (!clientData || !clientData.roomId)
+            return;
+        this.server.to(clientData.roomId).emit('reaction', {
+            playerId: client.id,
+            emoji,
+        });
+    }
+    executePlay(roomId, playerId, card) {
+        const room = this.rooms[roomId];
+        if (!room || room.status !== 'PLAYING')
+            return null;
+        const valResult = (0, game_engine_1.isValidPlay)(room, playerId, card);
+        if (!valResult.valid)
+            return null;
+        const trickRes = (0, game_engine_1.resolvePlay)(room, playerId, card);
+        this.server.to(roomId).emit('roomUpdated', room);
+        const playerName = room.players.find(p => p.id === playerId)?.username || 'Someone';
+        if (trickRes.thullaTriggered) {
+            const receiverName = room.players.find(p => p.id === trickRes.thullaReceiverId)?.username || 'Someone';
+            this.server.to(roomId).emit('chatMessage', {
+                sender: 'System',
+                text: `Thulla! ${playerName} broke suit. ${receiverName} picked up all cards.`,
+            });
+        }
+        else if (trickRes.trickWinnerId) {
+            const winnerName = room.players.find(p => p.id === trickRes.trickWinnerId)?.username || 'Someone';
+            this.server.to(roomId).emit('chatMessage', {
+                sender: 'System',
+                text: `${winnerName} won the trick.`,
+            });
+        }
+        return trickRes;
+    }
+    async processBotTurns(roomId) {
+        const room = this.rooms[roomId];
+        if (!room || room.status !== 'PLAYING' || !room.isBotRoom)
+            return;
+        while (room.status === 'PLAYING') {
+            const currentPlayer = room.players[room.currentTurn];
+            if (!currentPlayer || !(0, bot_ai_1.isBotPlayer)(currentPlayer.id))
+                break;
+            await new Promise(resolve => setTimeout(resolve, 700));
+            const activeRoom = this.rooms[roomId];
+            if (!activeRoom || activeRoom.status !== 'PLAYING')
+                return;
+            const bot = activeRoom.players[activeRoom.currentTurn];
+            if (!bot || !(0, bot_ai_1.isBotPlayer)(bot.id))
+                return;
+            const card = (0, bot_ai_1.pickBotCard)(activeRoom, bot.id);
+            if (!card)
+                return;
+            const trickRes = this.executePlay(roomId, bot.id, card);
+            if (!trickRes)
+                return;
+            if (trickRes.gameOver && activeRoom.loserId) {
+                await this.persistGameResults(activeRoom);
+                return;
+            }
+        }
+    }
+    async persistGameResults(room) {
+        try {
+            const dbMatch = await this.prisma.match.create({
+                data: {
+                    roomCode: room.roomId,
+                    status: 'COMPLETED',
+                },
+            });
+            for (const p of room.players) {
+                if (p.isBot)
+                    continue;
+                const uRec = await this.prisma.user.findUnique({
+                    where: { username: p.username },
+                });
+                if (uRec) {
+                    const isWinner = room.winnerOrder[0] === p.id;
+                    const isLoser = room.loserId === p.id;
+                    let coinsChange = 10;
+                    let xpEarned = 50;
+                    let rankChange = 5;
+                    if (isWinner) {
+                        coinsChange = 100;
+                        xpEarned = 250;
+                        rankChange = 25;
+                    }
+                    else if (isLoser) {
+                        coinsChange = -50;
+                        xpEarned = 10;
+                        rankChange = -15;
+                    }
+                    await this.prisma.user.update({
+                        where: { id: uRec.id },
+                        data: {
+                            coins: { increment: coinsChange },
+                            xp: { increment: xpEarned },
+                            wins: isWinner ? { increment: 1 } : undefined,
+                            losses: isLoser ? { increment: 1 } : undefined,
+                            rank: { increment: rankChange },
+                        },
+                    });
+                    await this.prisma.matchPlayer.create({
+                        data: {
+                            matchId: dbMatch.id,
+                            userId: uRec.id,
+                            isWinner,
+                            xpEarned,
+                            coinsChange,
+                            rankChange,
+                        },
+                    });
+                }
+            }
+            this.server.to(room.roomId).emit('gameOver', {
+                winnerOrder: room.winnerOrder,
+                loserId: room.loserId,
+            });
+        }
+        catch (err) {
+            console.error('Failed to persist game results:', err);
+        }
+    }
+};
+exports.GameGateway = GameGateway;
+__decorate([
+    (0, websockets_1.WebSocketServer)(),
+    __metadata("design:type", socket_io_1.Server)
+], GameGateway.prototype, "server", void 0);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('registerGuest'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __param(1, (0, websockets_1.MessageBody)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket, Object]),
+    __metadata("design:returntype", Promise)
+], GameGateway.prototype, "handleRegisterGuest", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('joinRoom'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __param(1, (0, websockets_1.MessageBody)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket, Object]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handleJoinRoom", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('leaveRoom'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __param(1, (0, websockets_1.MessageBody)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket, String]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handleLeaveRoom", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('toggleReady'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handleToggleReady", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('startBotGame'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __param(1, (0, websockets_1.MessageBody)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket, Object]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handleStartBotGame", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('startGame'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handleStartGame", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('playCard'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __param(1, (0, websockets_1.MessageBody)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket, Object]),
+    __metadata("design:returntype", Promise)
+], GameGateway.prototype, "handlePlayCard", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('sendMessage'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __param(1, (0, websockets_1.MessageBody)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket, String]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handleSendMessage", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('emojiReaction'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __param(1, (0, websockets_1.MessageBody)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket, String]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handleEmojiReaction", null);
+exports.GameGateway = GameGateway = __decorate([
+    (0, websockets_1.WebSocketGateway)({
+        cors: {
+            origin: '*',
+        },
+    }),
+    (0, common_1.Injectable)(),
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+], GameGateway);
+//# sourceMappingURL=game.gateway.js.map

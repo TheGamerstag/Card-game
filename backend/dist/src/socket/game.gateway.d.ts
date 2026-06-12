@@ -1,0 +1,31 @@
+import { OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+import { PrismaService } from '../prisma.service';
+export declare class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
+    private prisma;
+    server: Server;
+    private rooms;
+    private activeClients;
+    constructor(prisma: PrismaService);
+    handleConnection(client: Socket): void;
+    handleDisconnect(client: Socket): void;
+    handleRegisterGuest(client: Socket, data: {
+        username: string;
+    }): Promise<void>;
+    handleJoinRoom(client: Socket, data: {
+        roomId: string;
+        username: string;
+    }): void;
+    handleLeaveRoom(client: Socket, roomId: string): void;
+    handleToggleReady(client: Socket): void;
+    handleStartBotGame(client: Socket, data: {
+        totalPlayers: number;
+    }): void;
+    handleStartGame(client: Socket): void;
+    handlePlayCard(client: Socket, card: any): Promise<void>;
+    handleSendMessage(client: Socket, message: string): void;
+    handleEmojiReaction(client: Socket, emoji: string): void;
+    private executePlay;
+    private processBotTurns;
+    private persistGameResults;
+}
