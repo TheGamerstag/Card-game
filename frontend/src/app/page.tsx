@@ -44,7 +44,8 @@ export default function Home() {
 
   useEffect(() => {
     if (activeTab === 'leaderboard') {
-      fetch('http://localhost:3001/api/users/leaderboard')
+      const apiUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'https://card-game-1-uxkv.onrender.com';
+      fetch(`${apiUrl}/api/users/leaderboard`)
         .then(res => res.json())
         .then(data => setLeaderboard(data))
         .catch(err => console.error('Failed to load leaderboard', err));
