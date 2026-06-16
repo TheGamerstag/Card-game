@@ -12,7 +12,7 @@ import { AppController } from './app.controller';
       isGlobal: true,
     }),
   ],
-  controllers: [UsersController],
+  controllers: [AppController,UsersController],
   providers: [PrismaService, GameGateway],
 })
 export class AppModule {}
