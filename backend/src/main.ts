@@ -1,5 +1,5 @@
 // Define DATABASE_URL for Prisma v7 client initialization fallback
-process.env.DATABASE_URL = 'postgres://postgres:postgres@localhost:51214/template1?sslmode=disable';
+// process.env.DATABASE_URL = 'postgres://postgres:postgres@localhost:51214/template1?sslmode=disable';
 
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
