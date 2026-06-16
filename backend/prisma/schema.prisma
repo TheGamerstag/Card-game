@@ -2,6 +2,7 @@
 
 datasource db {
   provider = "postgresql"
+  url      = env("postgresql://bhabii_game_db_user:xjJVSgN0jOK9uD3RHAkAU8OGW9byxTwh@dpg-d8oib4cm0tmc73cpt19g-a/bhabii_game_db")
 }
 
 generator client {
