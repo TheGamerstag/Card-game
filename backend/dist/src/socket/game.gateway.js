@@ -24,6 +24,7 @@ let GameGateway = class GameGateway {
     server;
     rooms = {};
     activeClients = {};
+    disconnectTimeouts = {};
     constructor(prisma) {
         this.prisma = prisma;
     }
@@ -34,9 +35,48 @@ let GameGateway = class GameGateway {
         console.log(`Client disconnected: ${client.id}`);
         const clientData = this.activeClients[client.id];
         if (clientData && clientData.roomId) {
-            this.handleLeaveRoom(client, clientData.roomId);
+            const { userId, roomId } = clientData;
+            this.startDisconnectTimeout(userId, roomId);
         }
         delete this.activeClients[client.id];
+    }
+    startDisconnectTimeout(userId, roomId) {
+        if (this.disconnectTimeouts[userId]) {
+            clearTimeout(this.disconnectTimeouts[userId]);
+        }
+        const room = this.rooms[roomId];
+        if (!room)
+            return;
+        const delay = room.status === 'LOBBY' ? 2000 : 15000;
+        this.disconnectTimeouts[userId] = setTimeout(() => {
+            delete this.disconnectTimeouts[userId];
+            this.removeUserFromRoom(userId, roomId);
+        }, delay);
+    }
+    removeUserFromRoom(userId, roomId) {
+        const room = this.rooms[roomId];
+        if (!room)
+            return;
+        const pIndex = room.players.findIndex(p => p.id === userId);
+        if (pIndex !== -1) {
+            const username = room.players[pIndex].username;
+            room.players.splice(pIndex, 1);
+            this.server.to(roomId).emit('chatMessage', {
+                sender: 'System',
+                text: `${username} has left the room.`,
+            });
+            if (room.players.length === 0 || room.players.every(p => p.isBot)) {
+                delete this.rooms[roomId];
+            }
+            else {
+                if (room.status === 'PLAYING' && room.currentTurn === pIndex) {
+                    if (room.currentTurn >= room.players.length) {
+                        room.currentTurn = 0;
+                    }
+                }
+                this.server.to(roomId).emit('roomUpdated', room);
+            }
+        }
     }
     async handleRegisterGuest(client, data) {
         const avatar = `https://api.dicebear.com/7.x/bottts/svg?seed=${data.username}`;
@@ -52,7 +92,24 @@ let GameGateway = class GameGateway {
             userId: user.id,
             username: user.username,
         };
-        client.emit('registered', user);
+        const existingRoomId = Object.keys(this.rooms).find(roomId => this.rooms[roomId].players.some(p => p.id === user.id));
+        if (existingRoomId) {
+            if (this.disconnectTimeouts[user.id]) {
+                clearTimeout(this.disconnectTimeouts[user.id]);
+                delete this.disconnectTimeouts[user.id];
+            }
+            this.activeClients[client.id].roomId = existingRoomId;
+            client.join(existingRoomId);
+            client.emit('registered', user);
+            client.emit('roomUpdated', this.rooms[existingRoomId]);
+            this.server.to(existingRoomId).emit('chatMessage', {
+                sender: 'System',
+                text: `${user.username} has reconnected.`,
+            });
+        }
+        else {
+            client.emit('registered', user);
+        }
     }
     handleJoinRoom(client, data) {
         const { roomId, username } = data;
@@ -74,9 +131,9 @@ let GameGateway = class GameGateway {
             };
         }
         const room = this.rooms[roomId];
-        if (!room.players.some(p => p.id === client.id)) {
+        if (!room.players.some(p => p.id === clientData.userId)) {
             room.players.push({
-                id: client.id,
+                id: clientData.userId,
                 username: clientData.username,
                 avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${clientData.username}`,
                 cards: [],
@@ -92,26 +149,10 @@ let GameGateway = class GameGateway {
     }
     handleLeaveRoom(client, roomId) {
         client.leave(roomId);
-        const room = this.rooms[roomId];
-        if (room) {
-            const pIndex = room.players.findIndex(p => p.id === client.id);
-            if (pIndex !== -1) {
-                const username = room.players[pIndex].username;
-                room.players.splice(pIndex, 1);
-                this.server.to(roomId).emit('chatMessage', {
-                    sender: 'System',
-                    text: `${username} has left the room.`,
-                });
-                if (room.players.length === 0) {
-                    delete this.rooms[roomId];
-                }
-                else {
-                    this.server.to(roomId).emit('roomUpdated', room);
-                }
-            }
-        }
-        if (this.activeClients[client.id]) {
-            delete this.activeClients[client.id].roomId;
+        const clientData = this.activeClients[client.id];
+        if (clientData) {
+            this.removeUserFromRoom(clientData.userId, roomId);
+            delete clientData.roomId;
         }
     }
     handleToggleReady(client) {
@@ -121,7 +162,7 @@ let GameGateway = class GameGateway {
         const room = this.rooms[clientData.roomId];
         if (!room)
             return;
-        const player = room.players.find(p => p.id === client.id);
+        const player = room.players.find(p => p.id === clientData.userId);
         if (player) {
             player.isReady = !player.isReady;
             this.server.to(clientData.roomId).emit('roomUpdated', room);
@@ -144,7 +185,7 @@ let GameGateway = class GameGateway {
         this.activeClients[client.id] = clientData;
         client.join(roomId);
         const humanPlayer = {
-            id: client.id,
+            id: clientData.userId,
             username: clientData.username,
             avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${clientData.username}`,
             cards: [],
@@ -222,12 +263,12 @@ let GameGateway = class GameGateway {
         const room = this.rooms[clientData.roomId];
         if (!room)
             return;
-        const valResult = (0, game_engine_1.isValidPlay)(room, client.id, card);
+        const valResult = (0, game_engine_1.isValidPlay)(room, clientData.userId, card);
         if (!valResult.valid) {
             client.emit('error', valResult.reason || 'Invalid Play');
             return;
         }
-        const trickRes = this.executePlay(clientData.roomId, client.id, card);
+        const trickRes = this.executePlay(clientData.roomId, clientData.userId, card);
         if (!trickRes) {
             client.emit('error', 'Invalid Play');
             return;
@@ -252,7 +293,7 @@ let GameGateway = class GameGateway {
         if (!clientData || !clientData.roomId)
             return;
         this.server.to(clientData.roomId).emit('reaction', {
-            playerId: client.id,
+            playerId: clientData.userId,
             emoji,
         });
     }

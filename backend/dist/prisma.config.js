@@ -8,7 +8,7 @@ exports.default = (0, config_1.defineConfig)({
         path: "prisma/migrations",
     },
     datasource: {
-        url: "postgres://postgres:postgres@localhost:51214/template1?sslmode=disable",
+        url: process.env.DATABASE_URL,
     },
 });
 //# sourceMappingURL=prisma.config.js.map

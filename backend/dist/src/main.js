@@ -1,6 +1,5 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-process.env.DATABASE_URL = 'postgres://postgres:postgres@localhost:51214/template1?sslmode=disable';
 const core_1 = require("@nestjs/core");
 const app_module_1 = require("./app.module");
 async function bootstrap() {

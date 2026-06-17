@@ -6,9 +6,12 @@ export declare class GameGateway implements OnGatewayConnection, OnGatewayDiscon
     server: Server;
     private rooms;
     private activeClients;
+    private disconnectTimeouts;
     constructor(prisma: PrismaService);
     handleConnection(client: Socket): void;
     handleDisconnect(client: Socket): void;
+    private startDisconnectTimeout;
+    private removeUserFromRoom;
     handleRegisterGuest(client: Socket, data: {
         username: string;
     }): Promise<void>;

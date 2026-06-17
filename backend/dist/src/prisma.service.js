@@ -13,8 +13,7 @@ exports.PrismaService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const adapter_pg_1 = require("@prisma/adapter-pg");
-const DB_URL = process.env.DATABASE_URL ||
-    'postgres://postgres:postgres@localhost:51214/template1?sslmode=disable';
+const DB_URL = process.env.DATABASE_URL;
 let PrismaService = class PrismaService extends client_1.PrismaClient {
     constructor() {
         const adapter = new adapter_pg_1.PrismaPg(DB_URL);

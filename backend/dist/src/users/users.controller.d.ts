@@ -22,13 +22,13 @@ export declare class UsersController {
                 duration: number;
             };
         } & {
+            userId: string;
             id: string;
             isWinner: boolean;
             xpEarned: number;
             coinsChange: number;
             rankChange: number;
             matchId: string;
-            userId: string;
         })[];
     } & {
         id: string;

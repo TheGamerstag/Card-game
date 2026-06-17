@@ -31,6 +31,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // Maps socket.id to user database record details and current roomId
   private activeClients: Record<string, { userId: string; username: string; roomId?: string }> = {};
 
+  // Disconnect timeouts for users (keyed by userId)
+  private disconnectTimeouts: Record<string, NodeJS.Timeout> = {};
+
   constructor(private prisma: PrismaService) {}
 
   handleConnection(client: Socket) {
@@ -41,9 +44,54 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     console.log(`Client disconnected: ${client.id}`);
     const clientData = this.activeClients[client.id];
     if (clientData && clientData.roomId) {
-      this.handleLeaveRoom(client, clientData.roomId);
+      const { userId, roomId } = clientData;
+      this.startDisconnectTimeout(userId, roomId);
     }
     delete this.activeClients[client.id];
+  }
+
+  private startDisconnectTimeout(userId: string, roomId: string) {
+    if (this.disconnectTimeouts[userId]) {
+      clearTimeout(this.disconnectTimeouts[userId]);
+    }
+
+    const room = this.rooms[roomId];
+    if (!room) return;
+
+    // 2s delay in lobby, 15s delay in playing
+    const delay = room.status === 'LOBBY' ? 2000 : 15000;
+
+    this.disconnectTimeouts[userId] = setTimeout(() => {
+      delete this.disconnectTimeouts[userId];
+      this.removeUserFromRoom(userId, roomId);
+    }, delay);
+  }
+
+  private removeUserFromRoom(userId: string, roomId: string) {
+    const room = this.rooms[roomId];
+    if (!room) return;
+
+    const pIndex = room.players.findIndex(p => p.id === userId);
+    if (pIndex !== -1) {
+      const username = room.players[pIndex].username;
+      room.players.splice(pIndex, 1);
+      
+      this.server.to(roomId).emit('chatMessage', {
+        sender: 'System',
+        text: `${username} has left the room.`,
+      });
+
+      if (room.players.length === 0 || room.players.every(p => p.isBot)) {
+        delete this.rooms[roomId];
+      } else {
+        if (room.status === 'PLAYING' && room.currentTurn === pIndex) {
+          if (room.currentTurn >= room.players.length) {
+            room.currentTurn = 0;
+          }
+        }
+        this.server.to(roomId).emit('roomUpdated', room);
+      }
+    }
   }
 
   @SubscribeMessage('registerGuest')
@@ -66,7 +114,32 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       username: user.username,
     };
 
-    client.emit('registered', user);
+    // Reconnection check: Did this user belong to any active room?
+    const existingRoomId = Object.keys(this.rooms).find(roomId =>
+      this.rooms[roomId].players.some(p => p.id === user.id)
+    );
+
+    if (existingRoomId) {
+      // Clear disconnect timeout
+      if (this.disconnectTimeouts[user.id]) {
+        clearTimeout(this.disconnectTimeouts[user.id]);
+        delete this.disconnectTimeouts[user.id];
+      }
+
+      // Map client to room
+      this.activeClients[client.id].roomId = existingRoomId;
+      client.join(existingRoomId);
+
+      client.emit('registered', user);
+      client.emit('roomUpdated', this.rooms[existingRoomId]);
+      
+      this.server.to(existingRoomId).emit('chatMessage', {
+        sender: 'System',
+        text: `${user.username} has reconnected.`,
+      });
+    } else {
+      client.emit('registered', user);
+    }
   }
 
   @SubscribeMessage('joinRoom')
@@ -97,10 +170,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const room = this.rooms[roomId];
 
-    // Avoid duplicate additions
-    if (!room.players.some(p => p.id === client.id)) {
+    // Avoid duplicate additions using stable userId
+    if (!room.players.some(p => p.id === clientData.userId)) {
       room.players.push({
-        id: client.id,
+        id: clientData.userId,
         username: clientData.username,
         avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${clientData.username}`,
         cards: [],
@@ -122,26 +195,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() roomId: string
   ) {
     client.leave(roomId);
-    const room = this.rooms[roomId];
-    if (room) {
-      const pIndex = room.players.findIndex(p => p.id === client.id);
-      if (pIndex !== -1) {
-        const username = room.players[pIndex].username;
-        room.players.splice(pIndex, 1);
-        this.server.to(roomId).emit('chatMessage', {
-          sender: 'System',
-          text: `${username} has left the room.`,
-        });
-
-        if (room.players.length === 0) {
-          delete this.rooms[roomId];
-        } else {
-          this.server.to(roomId).emit('roomUpdated', room);
-        }
-      }
-    }
-    if (this.activeClients[client.id]) {
-      delete this.activeClients[client.id].roomId;
+    const clientData = this.activeClients[client.id];
+    if (clientData) {
+      this.removeUserFromRoom(clientData.userId, roomId);
+      delete clientData.roomId;
     }
   }
 
@@ -153,7 +210,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const room = this.rooms[clientData.roomId];
     if (!room) return;
 
-    const player = room.players.find(p => p.id === client.id);
+    const player = room.players.find(p => p.id === clientData.userId);
     if (player) {
       player.isReady = !player.isReady;
       this.server.to(clientData.roomId).emit('roomUpdated', room);
@@ -184,7 +241,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.join(roomId);
 
     const humanPlayer: Player = {
-      id: client.id,
+      id: clientData.userId,
       username: clientData.username,
       avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${clientData.username}`,
       cards: [],
@@ -280,13 +337,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const room = this.rooms[clientData.roomId];
     if (!room) return;
 
-    const valResult = isValidPlay(room, client.id, card);
+    const valResult = isValidPlay(room, clientData.userId, card);
     if (!valResult.valid) {
       client.emit('error', valResult.reason || 'Invalid Play');
       return;
     }
 
-    const trickRes = this.executePlay(clientData.roomId, client.id, card);
+    const trickRes = this.executePlay(clientData.roomId, clientData.userId, card);
     if (!trickRes) {
       client.emit('error', 'Invalid Play');
       return;
@@ -323,7 +380,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!clientData || !clientData.roomId) return;
 
     this.server.to(clientData.roomId).emit('reaction', {
-      playerId: client.id,
+      playerId: clientData.userId,
       emoji,
     });
   }

@@ -12,6 +12,7 @@ const config_1 = require("@nestjs/config");
 const prisma_service_1 = require("./prisma.service");
 const game_gateway_1 = require("./socket/game.gateway");
 const users_controller_1 = require("./users/users.controller");
+const app_controller_1 = require("./app.controller");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -22,7 +23,7 @@ exports.AppModule = AppModule = __decorate([
                 isGlobal: true,
             }),
         ],
-        controllers: [users_controller_1.UsersController],
+        controllers: [app_controller_1.AppController, users_controller_1.UsersController],
         providers: [prisma_service_1.PrismaService, game_gateway_1.GameGateway],
     })
 ], AppModule);
