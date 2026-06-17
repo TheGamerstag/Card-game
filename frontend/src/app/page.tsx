@@ -673,7 +673,7 @@ function GameAppContent() {
                         })}
                     </div>
 
-                    {/* Center: Trick arena / Felt board */}
+                    {/* Center: Trick arena / Felt board — fills all remaining space */}
                     <div className="flex-1 flex flex-col items-center justify-center relative p-2 sm:p-4 min-h-0 overflow-hidden">
                       <div className="text-center mb-4 z-10">
                         {gameState.currentSuit ? (
@@ -687,114 +687,128 @@ function GameAppContent() {
                         )}
                       </div>
 
-                      {/* Played cards in the current trick */}
-                      <div className="flex overflow-visible justify-center items-center min-h-[240px] md:min-h-[320px] gap-4 py-2 px-6">>
-                        {gameState.trickCards.map((act) => {
-                          const player = gameState.players.find(p => p.id === act.playerId);
-                          return (
-                            <div key={act.card.id} className="flex flex-col items-center flex-shrink-0">
-                              <PlayingCard card={act.card} disabled={true} isPlayable={true} />
-                              <span className="text-[10px] text-slate-300 mt-2 bg-slate-950/80 border border-white/5 px-2 py-0.5 rounded font-medium">
-                                {player?.username}
-                              </span>
-                            </div>
-                          );
-                        })}
+                      {/* Played cards in the current trick — no scroll, centred */}
+                      <div className="flex justify-center items-end gap-2 sm:gap-4 w-full px-4">
+                        {gameState.trickCards.length === 0 ? (
+                          <div className="text-slate-600 text-sm italic">No cards played yet</div>
+                        ) : (
+                          gameState.trickCards.map((act) => {
+                            const player = gameState.players.find(p => p.id === act.playerId);
+                            return (
+                              <div key={act.card.id} className="flex flex-col items-center flex-shrink-0">
+                                <PlayingCard card={act.card} disabled={true} isPlayable={true} />
+                                <span className="text-[10px] text-slate-300 mt-1.5 bg-slate-950/80 border border-white/5 px-2 py-0.5 rounded font-medium max-w-[80px] truncate">
+                                  {player?.username}
+                                </span>
+                              </div>
+                            );
+                          })
+                        )}
                       </div>
 
                       {gameState.status === 'GAME_OVER' && (
-                        <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center text-center p-6 z-30 overflow-y-auto">
-                          <div className="text-5xl mb-3">🏆</div>
-                          <h2 className="text-3xl sm:text-4xl font-extrabold text-red-500 mb-4">GAME OVER</h2>
+                        <div className="absolute inset-0 bg-black/95 flex flex-col items-center justify-start text-center z-30 overflow-y-auto py-6 px-4">
+                          <h2 className="text-2xl sm:text-3xl font-extrabold text-white mb-1">GAME OVER</h2>
+                          <p className="text-xs text-slate-400 mb-5">Final Rankings</p>
 
-                          {/* Final Rankings */}
-                          <div className="w-full max-w-xs mb-5 space-y-2">
-                            {gameState.winnerOrder.map((pid, idx) => {
+                          {/* Podium-style ranking display */}
+                          <div className="flex items-end justify-center gap-2 sm:gap-4 mb-5 w-full max-w-sm">
+                            {/* Build ordered list: winnerOrder + loser at end */}
+                            {[...gameState.winnerOrder, ...(gameState.loserId ? [gameState.loserId] : [])].map((pid, idx, arr) => {
                               const p = gameState.players.find(pl => pl.id === pid);
-                              return p ? (
-                                <div key={pid} className="flex items-center justify-between px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-                                  <span className="text-emerald-400 font-bold text-sm">#{idx + 1}</span>
-                                  <span className="text-white font-semibold text-sm">{p.username}</span>
-                                  <span className="text-emerald-400 text-xs">Safe ✓</span>
+                              if (!p) return null;
+                              const isWinner = idx === 0;
+                              const isLoser = pid === gameState.loserId;
+                              const isMe = pid === myUser.id;
+                              const coinsChange = isWinner ? 100 : isLoser ? -50 : 10;
+                              const xpEarned = isWinner ? 250 : isLoser ? 10 : 50;
+                              const sizes = ['h-28 sm:h-32', 'h-20 sm:h-24', 'h-16 sm:h-20', 'h-14 sm:h-16', 'h-12 sm:h-14', 'h-12'];
+                              const cardH = sizes[Math.min(idx, sizes.length - 1)];
+                              return (
+                                <div
+                                  key={pid}
+                                  className={`flex flex-col items-center gap-1 flex-1 max-w-[80px] ${isMe ? 'ring-2 ring-amber-400 rounded-2xl p-0.5' : ''}`}
+                                >
+                                  {/* Position badge */}
+                                  {isWinner && <div className="text-lg">👑</div>}
+                                  {isLoser && <div className="text-lg">💀</div>}
+                                  {!isWinner && !isLoser && <div className="text-xs font-bold text-slate-400">#{idx + 1}</div>}
+
+                                  {/* Avatar */}
+                                  <img
+                                    src={p.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${p.username}`}
+                                    alt={p.username}
+                                    className={`rounded-full border-2 ${isWinner ? 'w-12 h-12 border-amber-400' : isLoser ? 'w-8 h-8 border-red-500 opacity-70' : 'w-9 h-9 border-white/20'}`}
+                                  />
+
+                                  {/* Name */}
+                                  <span className={`font-bold truncate w-full text-center ${isWinner ? 'text-amber-400 text-xs' : isLoser ? 'text-red-400 text-[10px]' : 'text-slate-300 text-[10px]'}`}>
+                                    {p.username}
+                                  </span>
+
+                                  {/* Coins / XP */}
+                                  <div className={`text-[9px] font-semibold ${coinsChange >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {coinsChange >= 0 ? '+' : ''}{coinsChange} 🪙
+                                  </div>
+                                  <div className="text-[9px] text-blue-300 font-semibold">+{xpEarned} XP</div>
+
+                                  {/* Podium block */}
+                                  <div className={`w-full ${cardH} rounded-t-lg ${isWinner ? 'bg-amber-500/30 border border-amber-500/50' : isLoser ? 'bg-red-500/20 border border-red-500/30' : 'bg-white/5 border border-white/10'}`} />
                                 </div>
-                              ) : null;
+                              );
                             })}
-                            {gameState.loserId && (() => {
-                              const loser = gameState.players.find(p => p.id === gameState.loserId);
-                              return loser ? (
-                                <div className="flex items-center justify-between px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/30">
-                                  <span className="text-red-400 font-bold text-sm">💀</span>
-                                  <span className="text-white font-semibold text-sm">{loser.username}</span>
-                                  <span className="text-red-400 text-xs">Bhabhi</span>
-                                </div>
-                              ) : null;
-                            })()}
                           </div>
 
-                          {/* My result */}
-                          {gameState.loserId === myUser.id ? (
-                            <p className="text-slate-300 mb-2 text-sm">You got the <span className="font-bold text-red-400">Thulla</span> 😢</p>
-                          ) : gameState.winnerOrder.includes(myUser.id) ? (
-                            <p className="text-slate-300 mb-2 text-sm">You went out safely! <span className="font-bold text-emerald-400">Nice play 🎉</span></p>
-                          ) : null}
-
-                          {/* Ready count for Play Again */}
+                          {/* Ready count */}
                           {(() => {
                             const readyCount = gameState.players.filter(p => p.isReadyForNext).length;
                             const totalCount = gameState.players.filter(p => !p.isBot).length;
                             return readyCount > 0 ? (
                               <p className="text-xs text-slate-400 mb-3">
-                                <span className="text-amber-400 font-bold">{readyCount}/{totalCount}</span> players ready for next match
+                                <span className="text-amber-400 font-bold">{readyCount}/{totalCount}</span> ready for rematch
                               </p>
                             ) : null;
                           })()}
 
                           {/* Action buttons */}
-                          <div className="flex gap-3 mt-2">
+                          <div className="flex gap-3">
                             {!gameState.isBotRoom && (
                               <button
                                 onClick={playAgainReady}
                                 disabled={!!gameState.players.find(p => p.id === myUser.id)?.isReadyForNext}
-                                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-emerald-600/25"
+                                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-emerald-600/25 flex items-center gap-2"
                               >
-                                {gameState.players.find(p => p.id === myUser.id)?.isReadyForNext ? '✓ Ready!' : '▶ Play Again'}
+                                🔄 {gameState.players.find(p => p.id === myUser.id)?.isReadyForNext ? 'Rematch!' : 'Rematch'}
                               </button>
                             )}
                             <button
                               onClick={() => leaveRoom(gameState.roomId)}
-                              className="px-6 py-3 border border-white/10 text-slate-300 hover:bg-white/5 font-bold rounded-xl text-sm transition-all"
+                              className="px-5 py-2.5 border border-white/10 text-slate-300 hover:bg-white/5 font-bold rounded-xl text-sm transition-all flex items-center gap-2"
                             >
-                              Leave Room
+                              🏠 Go Home
                             </button>
                           </div>
                         </div>
                       )}
                     </div>
 
-                    {/* Bottom: Player's own hand */}
-                    <div className="bg-black/60 border-t border-white/5 px-2 py-3 sm:p-6 flex flex-col items-center backdrop-blur-sm relative z-20 flex-shrink-0">
-                      <div className="flex items-center justify-between w-full max-w-4xl mb-3">
-                        <div className="text-xs sm:text-sm font-semibold flex items-center gap-2">
-                          <span>Your Hand</span>
-                          <span className="bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full text-xs text-amber-400">
-                            {gameState.players.find(p => p.id === myUser.id)?.cards.length || 0} cards
+                    {/* Bottom: Player's own hand — compact to give table more space */}
+                    <div className="bg-black/70 border-t border-white/5 px-2 pt-2 pb-3 sm:px-4 sm:pt-3 sm:pb-4 flex flex-col items-center backdrop-blur-sm relative z-20 flex-shrink-0">
+                      <div className="flex items-center justify-between w-full max-w-4xl mb-1.5">
+                        <div className="text-xs font-semibold flex items-center gap-1.5">
+                          <span className="text-slate-300">Your Hand</span>
+                          <span className="bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full text-[10px] text-amber-400">
+                            {gameState.players.find(p => p.id === myUser.id)?.cards.length || 0}
                           </span>
                         </div>
                         {isMyTurn && (
-                          <div className="flex flex-col items-end gap-1">
-                            <div className="flex items-center gap-2">
-                              {!allPlayersMadeTwoMoves && (
-                                <span className="text-[9px] text-slate-400 font-medium whitespace-nowrap">
-                                  ℹ️ Take Cards after 2 moves
-                                </span>
-                              )}
-                              <div className="text-[10px] sm:text-xs bg-amber-500 text-black font-bold px-3 py-1 rounded-full animate-pulse flex-shrink-0 flex items-center gap-1.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-black animate-ping" />
-                                Your Turn ({timeLeft}s)
-                              </div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-[10px] bg-amber-500 text-black font-bold px-2.5 py-0.5 rounded-full animate-pulse flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-black animate-ping inline-block" />
+                              Your Turn ({timeLeft}s)
                             </div>
-                            <div className="w-24 h-1 bg-black/40 rounded-full overflow-hidden border border-white/5">
-                              <div 
+                            <div className="w-16 h-1 bg-black/40 rounded-full overflow-hidden border border-white/5">
+                              <div
                                 className={`h-full transition-all duration-300 ${timeLeft < 5 ? 'bg-rose-500 animate-pulse' : 'bg-amber-500'}`}
                                 style={{ width: `${(timeLeft / 20) * 100}%` }}
                               />
@@ -803,25 +817,21 @@ function GameAppContent() {
                         )}
                       </div>
 
-                      {/* Deck container fanned layout */}
-                      <div className="flex items-center justify-center -space-x-10 hover:-space-x-2 transition-all duration-300 max-w-full px-8 pb-4 overflow-x-auto overflow-y-visible py-6 no-scrollbar">
+                      {/* Fanned hand — overlapping, hover to spread */}
+                      <div className="flex items-end justify-center -space-x-8 sm:-space-x-6 hover:-space-x-1 transition-all duration-300 w-full overflow-x-auto overflow-y-visible py-2 no-scrollbar" style={{minHeight: '100px'}}>
                         {gameState.players
                           .find(p => p.id === myUser.id)
-                          ?.cards.map((card, cardIdx) => {
+                          ?.cards.map((card, cardIdx, arr) => {
                             return (
                               <div
                                 key={card.id}
-                                className="relative transition-all duration-300 hover:z-50 flex-shrink-0"
-                                style={{
-                                  zIndex: cardIdx + 2,
-                                }}
+                                className="relative transition-all duration-200 hover:z-50 hover:-translate-y-4 flex-shrink-0"
+                                style={{ zIndex: cardIdx + 2 }}
                               >
                                 <PlayingCard
                                   card={card}
                                   isPlayable={true}
-                                  onClick={() => {
-                                    if (isMyTurn) playCard(card);
-                                  }}
+                                  onClick={() => { if (isMyTurn) playCard(card); }}
                                 />
                               </div>
                             );
