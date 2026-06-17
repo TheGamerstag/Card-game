@@ -55,6 +55,9 @@ function GameAppContent() {
     playCard,
     sendMessage,
     sendEmojiReaction,
+    requestTakeCards,
+    respondTakeCards,
+    socket,
   } = useSocket();
 
   const router = useRouter();
@@ -785,23 +788,22 @@ function GameAppContent() {
         </div>
       </div>
         {/* Take Cards Request Modal */}
-      <TakeCardsModal
-        isOpen={!!takeRequest}
-        requesterName={takeRequest?.requesterName || ''}
-        onAccept={() => {
-          if (takeRequest) {
+      {takeRequest && (
+        <TakeCardsModal
+          isOpen={true}
+          requesterName={takeRequest.requesterName}
+          targetName={myUser?.username || ''}
+          onAccept={() => {
             respondTakeCards(takeRequest.requesterId, true);
             setTakeRequest(null);
-          }
-        }}
-        onDecline={() => {
-          if (takeRequest) {
+          }}
+          onDecline={() => {
             respondTakeCards(takeRequest.requesterId, false);
             setTakeRequest(null);
-          }
-        }}
-        onClose={() => setTakeRequest(null)}
-      />
+          }}
+          onClose={() => setTakeRequest(null)}
+        />
+      )}
     </main>
   );
 }

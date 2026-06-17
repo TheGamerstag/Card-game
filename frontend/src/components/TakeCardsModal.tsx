@@ -6,9 +6,10 @@ interface TakeCardsModalProps {
   onAccept: () => void;
   onDecline: () => void;
   onClose: () => void;
+  isOpen?: boolean;
 }
 
-const TakeCardsModal: React.FC<TakeCardsModalProps> = ({ requesterName, targetName, onAccept, onDecline, onClose }) => {
+const TakeCardsModal: React.FC<TakeCardsModalProps> = ({ requesterName, targetName, onAccept, onDecline, onClose, isOpen = true }) => {
   // Close on Escape key
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -18,7 +19,8 @@ const TakeCardsModal: React.FC<TakeCardsModalProps> = ({ requesterName, targetNa
     return () => document.removeEventListener('keydown', handleKey);
   }, [onClose]);
 
-  return (
+  if (!isOpen) return null;
+    return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-content" onClick={e => e.stopPropagation()}>
         <h2 className="modal-title">Card Take Request</h2>
