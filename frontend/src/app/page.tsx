@@ -688,7 +688,7 @@ function GameAppContent() {
                       </div>
 
                       {/* Played cards in the current trick */}
-                      <div className="flex items-center justify-center gap-4 h-40 max-w-full overflow-x-auto py-2 px-6">
+                      <div className="flex overflow-visible justify-center items-center min-h-[240px] md:min-h-[320px] gap-4 py-2 px-6">>
                         {gameState.trickCards.map((act) => {
                           const player = gameState.players.find(p => p.id === act.playerId);
                           return (
