@@ -142,6 +142,69 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('requestTakeCards')
+  async handleRequestTakeCards(@ConnectedSocket() client: Socket, @MessageBody() data: { targetPlayerId: string }) {
+    const clientData = this.activeClients[client.id];
+    if (!clientData || !clientData.roomId) return;
+    const room = this.rooms[clientData.roomId];
+    if (!room || room.status !== 'LOBBY') return;
+    const requesterId = clientData.userId;
+    const targetId = data.targetPlayerId;
+    // Validate both players exist and are active
+    const requester = room.players.find(p => p.id === requesterId);
+    const target = room.players.find(p => p.id === targetId);
+    if (!requester || !target || target.leftGame) return;
+    // Register pending request
+    room.pendingTakeRequests = room.pendingTakeRequests || {};
+    room.pendingTakeRequests[targetId] = requesterId;
+    // Find socket id of target
+    const targetSocketId = Object.entries(this.activeClients).find(([,v]) => v.userId === targetId && v.roomId === room.roomId)?.[0];
+    if (targetSocketId) {
+      this.server.to(targetSocketId).emit('takeCardsRequest', { requesterId, requesterName: requester.username });
+    }
+  }
+
+  @SubscribeMessage('respondTakeCards')
+  async handleRespondTakeCards(@ConnectedSocket() client: Socket, @MessageBody() data: { targetPlayerId: string, accept: boolean }) {
+    const clientData = this.activeClients[client.id];
+    if (!clientData || !clientData.roomId) return;
+    const room = this.rooms[clientData.roomId];
+    if (!room) return;
+    const targetId = data.targetPlayerId;
+    const accept = data.accept;
+    const requesterId = room.pendingTakeRequests?.[targetId];
+    if (!requesterId) return;
+    const requester = room.players.find(p => p.id === requesterId);
+    const target = room.players.find(p => p.id === targetId);
+    if (!requester || !target) return;
+    if (accept) {
+      // Transfer cards
+      requester.cards.push(...target.cards);
+      target.cards = [];
+      target.leftGame = true;
+      // Assign finishing position (next available)
+      room.winnerOrder.push(target.id);
+      this.server.to(room.roomId).emit('chatMessage', {
+        sender: 'System',
+        text: `${target.username} accepted the card takeover from ${requester.username} and finished in position ${room.winnerOrder.length}.`,
+      });
+    } else {
+      // Decline notification
+      const targetSocketId = client.id; // this client is target
+      const requesterSocketId = Object.entries(this.activeClients).find(([,v]) => v.userId === requesterId && v.roomId === room.roomId)?.[0];
+      if (requesterSocketId) {
+        this.server.to(requesterSocketId).emit('chatMessage', {
+          sender: 'System',
+          text: `${target.username} declined the card takeover request from ${requester.username}.`,
+        });
+      }
+    }
+    // Clear pending request
+    delete room.pendingTakeRequests[targetId];
+    // Emit updated room state
+    this.server.to(room.roomId).emit('roomUpdated', room);
+  }
+
   @SubscribeMessage('joinRoom')
   handleJoinRoom(
     @ConnectedSocket() client: Socket,
@@ -166,6 +229,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         loserId: null,
         winnerOrder: [],
         lastCompletedTrick: null,
+        pendingTakeRequests: {},
       };
     }
 
@@ -274,6 +338,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       winnerOrder: [],
       isBotRoom: true,
       lastCompletedTrick: null,
+      pendingTakeRequests: {},
     };
 
     const room = this.rooms[roomId];
@@ -317,6 +382,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     room.trickCards = [];
     room.currentSuit = null;
     room.lastCompletedTrick = null;
+    room.pendingTakeRequests = {}; // clear any pending take requests
 
     // Find the player holding Ace of Spades (starts the trick)
     const starterIdx = findAceOfSpadesPlayerIndex(room.players);

@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useSocket } from '../hooks/useSocket';
 import { PlayingCard } from '../components/PlayingCard';
+import TakeCardsModal from '../components/TakeCardsModal';
 import { BrandLogo } from '../components/BrandLogo';
 import { SiteFooter } from '../components/SiteFooter';
 import {
@@ -70,8 +71,22 @@ function GameAppContent() {
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [botPlayerCount, setBotPlayerCount] = useState(4);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  // State for incoming take cards request modal
+  const [takeRequest, setTakeRequest] = useState<{ requesterId: string; requesterName: string } | null>(null);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
+  // Listen for take cards request from server
+  useEffect(() => {
+    if (socket) {
+      const handler = (data: { requesterId: string; requesterName: string }) => {
+        setTakeRequest({ requesterId: data.requesterId, requesterName: data.requesterName });
+      };
+      socket.on('takeCardsRequest', handler);
+      return () => {
+        socket.off('takeCardsRequest', handler);
+      };
+    }
+  }, [socket]);
 
   // Auto-scroll chat to bottom
   useEffect(() => {
@@ -446,6 +461,14 @@ function GameAppContent() {
                             <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${p.isReady ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
                               {p.isReady ? 'Ready' : 'Not Ready'}
                             </span>
+                            {p.id !== myUser?.id && (
+                              <button
+                                onClick={() => requestTakeCards(p.id)}
+                                className="ml-2 py-1 px-2 btn-secondary text-xs rounded"
+                              >
+                                Request Cards
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -761,6 +784,24 @@ function GameAppContent() {
           <span>Responsive Ad Banner (Horizontal Layout)</span>
         </div>
       </div>
+        {/* Take Cards Request Modal */}
+      <TakeCardsModal
+        isOpen={!!takeRequest}
+        requesterName={takeRequest?.requesterName || ''}
+        onAccept={() => {
+          if (takeRequest) {
+            respondTakeCards(takeRequest.requesterId, true);
+            setTakeRequest(null);
+          }
+        }}
+        onDecline={() => {
+          if (takeRequest) {
+            respondTakeCards(takeRequest.requesterId, false);
+            setTakeRequest(null);
+          }
+        }}
+        onClose={() => setTakeRequest(null)}
+      />
     </main>
   );
 }

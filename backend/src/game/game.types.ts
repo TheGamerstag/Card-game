@@ -36,4 +36,6 @@ export interface GameState {
   winnerOrder: string[];     // order in which players completed all cards
   isBotRoom?: boolean;
   lastCompletedTrick: PlayAction[] | null;
+  // Maps target player ID to requester ID for pending take cards requests
+  pendingTakeRequests?: Record<string, string>;
 }

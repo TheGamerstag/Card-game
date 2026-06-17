@@ -67,6 +67,16 @@ export function useSocket() {
     socketRef.current?.emit('toggleReady');
   };
 
+  // Request to take all cards from another player (targetPlayerId)
+  const requestTakeCards = (targetPlayerId: string) => {
+    socketRef.current?.emit('requestTakeCards', { targetPlayerId });
+  };
+
+  // Respond to a take cards request (accept or decline)
+  const respondTakeCards = (targetPlayerId: string, accept: boolean) => {
+    socketRef.current?.emit('respondTakeCards', { targetPlayerId, accept });
+  };
+
   const startGame = () => {
     socketRef.current?.emit('startGame');
   };
@@ -104,5 +114,7 @@ export function useSocket() {
     playCard,
     sendMessage,
     sendEmojiReaction,
+    requestTakeCards,
+    respondTakeCards,
   };
 }
