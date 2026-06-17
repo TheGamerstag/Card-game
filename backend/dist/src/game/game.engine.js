@@ -44,6 +44,7 @@ function dealCards(players) {
     players.forEach(p => {
         p.cards = [];
         p.leftGame = false;
+        p.movesCount = 0;
     });
     let cardIdx = 0;
     while (cardIdx < deck.length) {

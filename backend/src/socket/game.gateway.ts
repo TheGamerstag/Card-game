@@ -208,7 +208,27 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const room = this.rooms[clientData.roomId];
     if (!room) return;
 
+    // Only during play
+    if (room.status !== 'PLAYING') {
+      client.emit('error', 'Take cards is only available during active play.');
+      return;
+    }
+
+    // Requester must be current turn player
     const requesterId = clientData.userId;
+    const currentTurnPlayer = room.players[room.currentTurn];
+    if (!currentTurnPlayer || currentTurnPlayer.id !== requesterId) {
+      client.emit('error', 'You can only request to take cards on your turn.');
+      return;
+    }
+
+    // All players must have made at least 2 moves
+    const allPlayedTwoMoves = room.players.every(p => p.leftGame || (p.movesCount || 0) >= 2);
+    if (!allPlayedTwoMoves) {
+      client.emit('error', 'Take cards is only allowed after all players have made at least 2 moves.');
+      return;
+    }
+
     const targetId = data.targetPlayerId;
     const requester = room.players.find(p => p.id === requesterId);
     const target = room.players.find(p => p.id === targetId);
@@ -216,6 +236,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     room.pendingTakeRequests = room.pendingTakeRequests || {};
     room.pendingTakeRequests[targetId] = requesterId;
+
+    if (target.isBot) {
+      // Simulate CPU automatic acceptance after a short delay
+      setTimeout(() => {
+        const currentRoom = this.rooms[room.roomId];
+        if (currentRoom && currentRoom.pendingTakeRequests?.[targetId] === requesterId) {
+          this.executeBotAcceptTakeCards(room.roomId, targetId, requesterId);
+        }
+      }, 1000);
+      return;
+    }
 
     const targetSocketId = Object.entries(this.activeClients)
       .find(([, v]) => v.userId === targetId && v.roomId === room.roomId)?.[0];
@@ -225,6 +256,31 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         requesterName: requester.username,
       });
     }
+  }
+
+  private executeBotAcceptTakeCards(roomId: string, targetId: string, requesterId: string) {
+    const room = this.rooms[roomId];
+    if (!room) return;
+
+    const requester = room.players.find(p => p.id === requesterId);
+    const target = room.players.find(p => p.id === targetId);
+    if (!requester || !target) return;
+
+    // Perform the card takeover
+    requester.cards.push(...target.cards);
+    target.cards = [];
+    target.leftGame = true;
+    room.winnerOrder.push(target.id);
+
+    this.server.to(room.roomId).emit('chatMessage', {
+      sender: 'System',
+      text: `${target.username} (CPU) accepted the card takeover from ${requester.username} and finished in position #${room.winnerOrder.length}.`,
+    });
+
+    if (room.pendingTakeRequests) {
+      delete room.pendingTakeRequests[targetId];
+    }
+    this.server.to(room.roomId).emit('roomUpdated', room);
   }
 
   @SubscribeMessage('respondTakeCards')
@@ -386,6 +442,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       isReady: false,
       isReadyForNext: false,
       leftGame: false,
+      movesCount: 0,
     }));
     room.status = 'LOBBY';
     room.deck = [];
@@ -581,6 +638,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const valResult = isValidPlay(room, playerId, card);
     if (!valResult.valid) return null;
+
+    const player = room.players.find(p => p.id === playerId);
+    if (player) {
+      player.movesCount = (player.movesCount || 0) + 1;
+    }
 
     const trickRes = resolvePlay(room, playerId, card);
     this.server.to(roomId).emit('roomUpdated', room);

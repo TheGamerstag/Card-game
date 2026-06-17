@@ -42,6 +42,7 @@ export function dealCards(players: Player[]): void {
   players.forEach(p => {
     p.cards = [];
     p.leftGame = false;
+    p.movesCount = 0;
   });
 
   // Distribute all 52 cards equally

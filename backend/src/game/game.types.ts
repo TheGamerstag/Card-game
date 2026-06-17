@@ -18,6 +18,7 @@ export interface Player {
   isReadyForNext?: boolean; // ready for next match after game over
   leftGame: boolean; // safe / leaves game after playing all cards
   isBot?: boolean;
+  movesCount?: number;
 }
 
 export interface PlayAction {

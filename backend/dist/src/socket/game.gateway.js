@@ -175,7 +175,21 @@ let GameGateway = class GameGateway {
         const room = this.rooms[clientData.roomId];
         if (!room)
             return;
+        if (room.status !== 'PLAYING') {
+            client.emit('error', 'Take cards is only available during active play.');
+            return;
+        }
         const requesterId = clientData.userId;
+        const currentTurnPlayer = room.players[room.currentTurn];
+        if (!currentTurnPlayer || currentTurnPlayer.id !== requesterId) {
+            client.emit('error', 'You can only request to take cards on your turn.');
+            return;
+        }
+        const allPlayedTwoMoves = room.players.every(p => p.leftGame || (p.movesCount || 0) >= 2);
+        if (!allPlayedTwoMoves) {
+            client.emit('error', 'Take cards is only allowed after all players have made at least 2 moves.');
+            return;
+        }
         const targetId = data.targetPlayerId;
         const requester = room.players.find(p => p.id === requesterId);
         const target = room.players.find(p => p.id === targetId);
@@ -183,6 +197,15 @@ let GameGateway = class GameGateway {
             return;
         room.pendingTakeRequests = room.pendingTakeRequests || {};
         room.pendingTakeRequests[targetId] = requesterId;
+        if (target.isBot) {
+            setTimeout(() => {
+                const currentRoom = this.rooms[room.roomId];
+                if (currentRoom && currentRoom.pendingTakeRequests?.[targetId] === requesterId) {
+                    this.executeBotAcceptTakeCards(room.roomId, targetId, requesterId);
+                }
+            }, 1000);
+            return;
+        }
         const targetSocketId = Object.entries(this.activeClients)
             .find(([, v]) => v.userId === targetId && v.roomId === room.roomId)?.[0];
         if (targetSocketId) {
@@ -191,6 +214,27 @@ let GameGateway = class GameGateway {
                 requesterName: requester.username,
             });
         }
+    }
+    executeBotAcceptTakeCards(roomId, targetId, requesterId) {
+        const room = this.rooms[roomId];
+        if (!room)
+            return;
+        const requester = room.players.find(p => p.id === requesterId);
+        const target = room.players.find(p => p.id === targetId);
+        if (!requester || !target)
+            return;
+        requester.cards.push(...target.cards);
+        target.cards = [];
+        target.leftGame = true;
+        room.winnerOrder.push(target.id);
+        this.server.to(room.roomId).emit('chatMessage', {
+            sender: 'System',
+            text: `${target.username} (CPU) accepted the card takeover from ${requester.username} and finished in position #${room.winnerOrder.length}.`,
+        });
+        if (room.pendingTakeRequests) {
+            delete room.pendingTakeRequests[targetId];
+        }
+        this.server.to(room.roomId).emit('roomUpdated', room);
     }
     handleRespondTakeCards(client, data) {
         const clientData = this.activeClients[client.id];
@@ -332,6 +376,7 @@ let GameGateway = class GameGateway {
             isReady: false,
             isReadyForNext: false,
             leftGame: false,
+            movesCount: 0,
         }));
         room.status = 'LOBBY';
         room.deck = [];
@@ -491,6 +536,10 @@ let GameGateway = class GameGateway {
         const valResult = (0, game_engine_1.isValidPlay)(room, playerId, card);
         if (!valResult.valid)
             return null;
+        const player = room.players.find(p => p.id === playerId);
+        if (player) {
+            player.movesCount = (player.movesCount || 0) + 1;
+        }
         const trickRes = (0, game_engine_1.resolvePlay)(room, playerId, card);
         this.server.to(roomId).emit('roomUpdated', room);
         const playerName = room.players.find(p => p.id === playerId)?.username || 'Someone';

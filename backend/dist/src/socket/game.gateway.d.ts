@@ -24,6 +24,7 @@ export declare class GameGateway implements OnGatewayConnection, OnGatewayDiscon
     handleRequestTakeCards(client: Socket, data: {
         targetPlayerId: string;
     }): void;
+    private executeBotAcceptTakeCards;
     handleRespondTakeCards(client: Socket, data: {
         targetPlayerId: string;
         accept: boolean;

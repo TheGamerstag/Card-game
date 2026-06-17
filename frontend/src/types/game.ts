@@ -18,6 +18,7 @@ export interface Player {
   isReadyForNext?: boolean;
   leftGame: boolean;
   isBot?: boolean;
+  movesCount?: number;
 }
 
 export interface PlayAction {

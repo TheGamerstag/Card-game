@@ -86,6 +86,9 @@ function GameAppContent() {
   
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  const isMyTurn = !!(gameState && myUser && gameState.status === 'PLAYING' && gameState.players[gameState.currentTurn]?.id === myUser.id);
+  const allPlayersMadeTwoMoves = !!(gameState && gameState.players.every(p => p.leftGame || (p.movesCount || 0) >= 2));
+
   // Auto-scroll chat to bottom
   useEffect(() => {
     if (chatEndRef.current) {
@@ -464,12 +467,6 @@ function GameAppContent() {
                             {/* Actions for other players */}
                             {p.id !== myUser?.id && !p.leftGame && (
                               <div className="flex gap-2">
-                                <button
-                                  onClick={() => requestTakeCards(p.id)}
-                                  className="flex-1 py-1 px-2 text-xs font-semibold rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 hover:bg-amber-500/20 transition-all"
-                                >
-                                  🃏 Take All Cards
-                                </button>
                                 {/* Trade: pick a card from your hand to offer */}
                                 {myUser && gameState.players.find(me => me.id === myUser.id)?.cards.length ? (
                                   <select
@@ -579,11 +576,18 @@ function GameAppContent() {
                         .filter(p => p.username !== myUser.username)
                         .map((p) => {
                           const isCurrentTurn = gameState.players[gameState.currentTurn]?.id === p.id;
+                          const showTakeAction = isMyTurn && !p.leftGame;
                           return (
                             <div
                               key={p.id}
+                              onClick={() => {
+                                if (showTakeAction && allPlayersMadeTwoMoves) {
+                                  requestTakeCards(p.id);
+                                }
+                              }}
                               className={`relative px-4 py-2 rounded-xl flex items-center gap-3 transition-all duration-300 flex-shrink-0
                                 ${isCurrentTurn ? 'bg-amber-500/20 border border-amber-500/40 shadow-lg shadow-amber-500/10 scale-105' : 'bg-black/50 border border-white/5'}
+                                ${showTakeAction && allPlayersMadeTwoMoves ? 'cursor-pointer hover:border-amber-500/40 hover:bg-amber-500/10 active:scale-95' : ''}
                               `}
                             >
                               <div className="w-8 h-8 rounded-full bg-slate-900 overflow-hidden relative">
@@ -604,6 +608,31 @@ function GameAppContent() {
                                 <span className="absolute -top-2 -right-2 bg-emerald-500 text-black text-[9px] font-bold px-1.5 py-0.5 rounded-full">
                                   Safe
                                 </span>
+                              )}
+
+                              {/* Take Cards Action Pill (Optimized for Mobile) */}
+                              {showTakeAction && (
+                                <div className="ml-2 pl-2 border-l border-white/10 flex items-center">
+                                  {allPlayersMadeTwoMoves ? (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        requestTakeCards(p.id);
+                                      }}
+                                      className="px-2.5 py-1 text-[10px] font-extrabold rounded-lg bg-amber-500 hover:bg-amber-400 active:scale-95 text-black transition-all shadow-md shadow-amber-500/25 whitespace-nowrap cursor-pointer"
+                                    >
+                                      🃏 Take Cards
+                                    </button>
+                                  ) : (
+                                    <button
+                                      disabled
+                                      className="px-2.5 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-slate-500 border border-white/5 cursor-not-allowed whitespace-nowrap flex items-center gap-1"
+                                      title="Available after 2 moves by all players"
+                                    >
+                                      🔒 Take Cards
+                                    </button>
+                                  )}
+                                </div>
                               )}
                             </div>
                           );
@@ -717,9 +746,16 @@ function GameAppContent() {
                             {gameState.players.find(p => p.id === myUser.id)?.cards.length || 0} cards
                           </span>
                         </div>
-                        {gameState.players[gameState.currentTurn]?.id === myUser.id && (
-                          <div className="text-[10px] sm:text-xs bg-amber-500 text-black font-bold px-3 py-1 rounded-full animate-pulse">
-                            Your Turn
+                        {isMyTurn && (
+                          <div className="flex items-center gap-2">
+                            {!allPlayersMadeTwoMoves && (
+                              <span className="text-[9px] text-slate-400 font-medium whitespace-nowrap">
+                                ℹ️ Take Cards after 2 moves
+                              </span>
+                            )}
+                            <div className="text-[10px] sm:text-xs bg-amber-500 text-black font-bold px-3 py-1 rounded-full animate-pulse flex-shrink-0">
+                              Your Turn
+                            </div>
                           </div>
                         )}
                       </div>
@@ -729,7 +765,6 @@ function GameAppContent() {
                         {gameState.players
                           .find(p => p.id === myUser.id)
                           ?.cards.map((card, cardIdx) => {
-                            const isMyTurn = gameState.players[gameState.currentTurn]?.id === myUser.id;
                             return (
                               <div
                                 key={card.id}
