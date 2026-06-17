@@ -38,4 +38,5 @@ export interface GameState {
         offeredCardId: number;
         requestedCardId: number;
     }>;
+    turnStartedAt?: number;
 }

@@ -7,6 +7,7 @@ export declare class GameGateway implements OnGatewayConnection, OnGatewayDiscon
     private rooms;
     private activeClients;
     private disconnectTimeouts;
+    private turnTimers;
     constructor(prisma: PrismaService);
     handleConnection(client: Socket): void;
     handleDisconnect(client: Socket): void;
@@ -18,7 +19,7 @@ export declare class GameGateway implements OnGatewayConnection, OnGatewayDiscon
     handleJoinRoom(client: Socket, data: {
         roomId: string;
         username: string;
-    }): void;
+    }): Promise<void>;
     handleLeaveRoom(client: Socket, roomId: string): void;
     handleToggleReady(client: Socket): void;
     handleRequestTakeCards(client: Socket, data: {
@@ -47,6 +48,9 @@ export declare class GameGateway implements OnGatewayConnection, OnGatewayDiscon
     handlePlayCard(client: Socket, card: any): Promise<void>;
     handleSendMessage(client: Socket, message: string): void;
     handleEmojiReaction(client: Socket, emoji: string): void;
+    private startTurnTimer;
+    private clearTurnTimer;
+    private handleTurnTimeout;
     private executePlay;
     private processBotTurns;
     private persistGameResults;

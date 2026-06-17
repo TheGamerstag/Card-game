@@ -89,6 +89,25 @@ function GameAppContent() {
   const isMyTurn = !!(gameState && myUser && gameState.status === 'PLAYING' && gameState.players[gameState.currentTurn]?.id === myUser.id);
   const allPlayersMadeTwoMoves = !!(gameState && gameState.players.every(p => p.leftGame || (p.movesCount || 0) >= 2));
 
+  const [timeLeft, setTimeLeft] = useState<number>(20);
+
+  useEffect(() => {
+    if (!gameState || gameState.status !== 'PLAYING' || !gameState.turnStartedAt) {
+      return;
+    }
+
+    const updateTimer = () => {
+      const elapsed = Math.floor((Date.now() - gameState.turnStartedAt!) / 1000);
+      const remaining = Math.max(0, 20 - elapsed);
+      setTimeLeft(remaining);
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 200);
+
+    return () => clearInterval(interval);
+  }, [gameState?.turnStartedAt, gameState?.status]);
+
   // Auto-scroll chat to bottom
   useEffect(() => {
     if (chatEndRef.current) {
@@ -107,13 +126,13 @@ function GameAppContent() {
     }
   }, [activeTab]);
 
-  // Sync username from localStorage on connect
+  // Sync username from localStorage on connect/reconnect
   useEffect(() => {
     const storedUsername = localStorage.getItem('username');
-    if (storedUsername && !myUser && connected) {
+    if (storedUsername && connected) {
       registerGuest(storedUsername);
     }
-  }, [connected, myUser]);
+  }, [connected]);
 
   // Sync room URL to client state (reconnect/auto-join)
   useEffect(() => {
@@ -585,7 +604,7 @@ function GameAppContent() {
                                   requestTakeCards(p.id);
                                 }
                               }}
-                              className={`relative px-4 py-2 rounded-xl flex items-center gap-3 transition-all duration-300 flex-shrink-0
+                              className={`relative px-4 py-2 rounded-xl flex items-center gap-3 transition-all duration-300 flex-shrink-0 overflow-hidden
                                 ${isCurrentTurn ? 'bg-amber-500/20 border border-amber-500/40 shadow-lg shadow-amber-500/10 scale-105' : 'bg-black/50 border border-white/5'}
                                 ${showTakeAction && allPlayersMadeTwoMoves ? 'cursor-pointer hover:border-amber-500/40 hover:bg-amber-500/10 active:scale-95' : ''}
                               `}
@@ -602,7 +621,14 @@ function GameAppContent() {
                                     </span>
                                   )}
                                 </div>
-                                <div className="text-[10px] text-slate-400">{p.cards.length} cards left</div>
+                                <div className="text-[10px] text-slate-400 flex items-center gap-1.5">
+                                  <span>{p.cards.length} cards left</span>
+                                  {isCurrentTurn && (
+                                    <span className={`text-[10px] font-extrabold flex items-center gap-0.5 ${timeLeft < 5 ? 'text-rose-400 animate-pulse' : 'text-amber-400'}`}>
+                                      ⏱️ {timeLeft}s
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                               {p.leftGame && (
                                 <span className="absolute -top-2 -right-2 bg-emerald-500 text-black text-[9px] font-bold px-1.5 py-0.5 rounded-full">
@@ -633,6 +659,14 @@ function GameAppContent() {
                                     </button>
                                   )}
                                 </div>
+                              )}
+
+                              {/* Turn Timer Progress Line */}
+                              {isCurrentTurn && (
+                                <div 
+                                  className={`absolute bottom-0 left-0 h-0.5 transition-all duration-300 ${timeLeft < 5 ? 'bg-rose-500 animate-pulse' : 'bg-amber-500'}`}
+                                  style={{ width: `${(timeLeft / 20) * 100}%` }}
+                                />
                               )}
                             </div>
                           );
@@ -747,14 +781,23 @@ function GameAppContent() {
                           </span>
                         </div>
                         {isMyTurn && (
-                          <div className="flex items-center gap-2">
-                            {!allPlayersMadeTwoMoves && (
-                              <span className="text-[9px] text-slate-400 font-medium whitespace-nowrap">
-                                ℹ️ Take Cards after 2 moves
-                              </span>
-                            )}
-                            <div className="text-[10px] sm:text-xs bg-amber-500 text-black font-bold px-3 py-1 rounded-full animate-pulse flex-shrink-0">
-                              Your Turn
+                          <div className="flex flex-col items-end gap-1">
+                            <div className="flex items-center gap-2">
+                              {!allPlayersMadeTwoMoves && (
+                                <span className="text-[9px] text-slate-400 font-medium whitespace-nowrap">
+                                  ℹ️ Take Cards after 2 moves
+                                </span>
+                              )}
+                              <div className="text-[10px] sm:text-xs bg-amber-500 text-black font-bold px-3 py-1 rounded-full animate-pulse flex-shrink-0 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-black animate-ping" />
+                                Your Turn ({timeLeft}s)
+                              </div>
+                            </div>
+                            <div className="w-24 h-1 bg-black/40 rounded-full overflow-hidden border border-white/5">
+                              <div 
+                                className={`h-full transition-all duration-300 ${timeLeft < 5 ? 'bg-rose-500 animate-pulse' : 'bg-amber-500'}`}
+                                style={{ width: `${(timeLeft / 20) * 100}%` }}
+                              />
                             </div>
                           </div>
                         )}

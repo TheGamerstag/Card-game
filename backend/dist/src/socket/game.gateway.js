@@ -25,6 +25,7 @@ let GameGateway = class GameGateway {
     rooms = {};
     activeClients = {};
     disconnectTimeouts = {};
+    turnTimers = {};
     constructor(prisma) {
         this.prisma = prisma;
     }
@@ -98,7 +99,7 @@ let GameGateway = class GameGateway {
             this.activeClients[client.id].roomId = existingRoomId;
             client.join(existingRoomId);
             client.emit('registered', user);
-            client.emit('roomUpdated', this.rooms[existingRoomId]);
+            this.server.to(existingRoomId).emit('roomUpdated', this.rooms[existingRoomId]);
             this.server.to(existingRoomId).emit('chatMessage', {
                 sender: 'System',
                 text: `${user.username} has reconnected.`,
@@ -108,11 +109,22 @@ let GameGateway = class GameGateway {
             client.emit('registered', user);
         }
     }
-    handleJoinRoom(client, data) {
+    async handleJoinRoom(client, data) {
         const { roomId, username } = data;
-        const clientData = this.activeClients[client.id] || { userId: client.id, username };
-        clientData.roomId = roomId;
-        this.activeClients[client.id] = clientData;
+        let clientData = this.activeClients[client.id];
+        if (!clientData) {
+            const avatar = `https://api.dicebear.com/7.x/bottts/svg?seed=${username}`;
+            const user = await this.prisma.user.upsert({
+                where: { username },
+                update: {},
+                create: { username, avatar },
+            });
+            clientData = { userId: user.id, username: user.username, roomId };
+            this.activeClients[client.id] = clientData;
+        }
+        else {
+            clientData.roomId = roomId;
+        }
         client.join(roomId);
         if (!this.rooms[roomId]) {
             this.rooms[roomId] = {
@@ -453,7 +465,7 @@ let GameGateway = class GameGateway {
         room.currentSuit = null;
         const starterIdx = (0, game_engine_1.findAceOfSpadesPlayerIndex)(room.players);
         room.currentTurn = starterIdx !== -1 ? starterIdx : 0;
-        this.server.to(roomId).emit('roomUpdated', room);
+        this.startTurnTimer(roomId);
         this.server.to(roomId).emit('chatMessage', {
             sender: 'System',
             text: `Bot game started with ${totalPlayers} players (${botCount} CPU). Ace of Spades must lead.`,
@@ -482,7 +494,7 @@ let GameGateway = class GameGateway {
         room.pendingTradeRequests = {};
         const starterIdx = (0, game_engine_1.findAceOfSpadesPlayerIndex)(room.players);
         room.currentTurn = starterIdx !== -1 ? starterIdx : 0;
-        this.server.to(clientData.roomId).emit('roomUpdated', room);
+        this.startTurnTimer(clientData.roomId);
         this.server.to(clientData.roomId).emit('chatMessage', {
             sender: 'System',
             text: 'Game has started! Ace of Spades must lead.',
@@ -529,6 +541,45 @@ let GameGateway = class GameGateway {
             emoji,
         });
     }
+    startTurnTimer(roomId) {
+        this.clearTurnTimer(roomId);
+        const room = this.rooms[roomId];
+        if (!room || room.status !== 'PLAYING')
+            return;
+        room.turnStartedAt = Date.now();
+        this.server.to(roomId).emit('roomUpdated', room);
+        this.turnTimers[roomId] = setTimeout(() => {
+            this.handleTurnTimeout(roomId);
+        }, 20000);
+    }
+    clearTurnTimer(roomId) {
+        if (this.turnTimers[roomId]) {
+            clearTimeout(this.turnTimers[roomId]);
+            delete this.turnTimers[roomId];
+        }
+    }
+    handleTurnTimeout(roomId) {
+        const room = this.rooms[roomId];
+        if (!room || room.status !== 'PLAYING')
+            return;
+        const currentPlayer = room.players[room.currentTurn];
+        if (!currentPlayer || currentPlayer.leftGame)
+            return;
+        const validCards = currentPlayer.cards.filter(c => (0, game_engine_1.isValidPlay)(room, currentPlayer.id, c).valid);
+        if (validCards.length > 0) {
+            const cardToPlay = validCards[Math.floor(Math.random() * validCards.length)];
+            this.server.to(roomId).emit('chatMessage', {
+                sender: 'System',
+                text: `${currentPlayer.username}'s turn timed out. Auto-playing ${cardToPlay.code}.`,
+            });
+            const trickRes = this.executePlay(roomId, currentPlayer.id, cardToPlay);
+            if (trickRes && trickRes.gameOver && room.loserId) {
+                void this.persistGameResults(room);
+                return;
+            }
+        }
+        void this.processBotTurns(roomId);
+    }
     executePlay(roomId, playerId, card) {
         const room = this.rooms[roomId];
         if (!room || room.status !== 'PLAYING')
@@ -541,7 +592,7 @@ let GameGateway = class GameGateway {
             player.movesCount = (player.movesCount || 0) + 1;
         }
         const trickRes = (0, game_engine_1.resolvePlay)(room, playerId, card);
-        this.server.to(roomId).emit('roomUpdated', room);
+        this.startTurnTimer(roomId);
         const playerName = room.players.find(p => p.id === playerId)?.username || 'Someone';
         if (trickRes.thullaTriggered) {
             const receiverName = room.players.find(p => p.id === trickRes.thullaReceiverId)?.username || 'Someone';
@@ -587,6 +638,7 @@ let GameGateway = class GameGateway {
         }
     }
     async persistGameResults(room) {
+        this.clearTurnTimer(room.roomId);
         try {
             const dbMatch = await this.prisma.match.create({
                 data: { roomCode: room.roomId, status: 'COMPLETED' },
@@ -655,7 +707,7 @@ __decorate([
     __param(1, (0, websockets_1.MessageBody)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [socket_io_1.Socket, Object]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], GameGateway.prototype, "handleJoinRoom", null);
 __decorate([
     (0, websockets_1.SubscribeMessage)('leaveRoom'),

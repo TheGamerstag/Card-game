@@ -40,4 +40,5 @@ export interface GameState {
   lastCompletedTrick: PlayAction[] | null;
   pendingTakeRequests?: Record<string, string>;
   pendingTradeRequests?: Record<string, { requesterId: string; offeredCardId: number; requestedCardId: number }>;
+  turnStartedAt?: number;
 }

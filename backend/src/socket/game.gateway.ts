@@ -28,6 +28,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private rooms: Record<string, GameState> = {};
   private activeClients: Record<string, { userId: string; username: string; roomId?: string }> = {};
   private disconnectTimeouts: Record<string, NodeJS.Timeout> = {};
+  private turnTimers: Record<string, NodeJS.Timeout> = {};
 
   constructor(private prisma: PrismaService) {}
 
@@ -51,7 +52,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
     const room = this.rooms[roomId];
     if (!room) return;
-    const delay = room.status === 'LOBBY' ? 2000 : 15000;
+    const delay = room.status === 'LOBBY' ? 2000 : 120000; // 2 min for PLAYING
     this.disconnectTimeouts[userId] = setTimeout(() => {
       delete this.disconnectTimeouts[userId];
       this.removeUserFromRoom(userId, roomId);
@@ -112,7 +113,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.activeClients[client.id].roomId = existingRoomId;
       client.join(existingRoomId);
       client.emit('registered', user);
-      client.emit('roomUpdated', this.rooms[existingRoomId]);
+      this.server.to(existingRoomId).emit('roomUpdated', this.rooms[existingRoomId]);
       this.server.to(existingRoomId).emit('chatMessage', {
         sender: 'System',
         text: `${user.username} has reconnected.`,
@@ -123,14 +124,24 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('joinRoom')
-  handleJoinRoom(
+  async handleJoinRoom(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { roomId: string; username: string }
   ) {
     const { roomId, username } = data;
-    const clientData = this.activeClients[client.id] || { userId: client.id, username };
-    clientData.roomId = roomId;
-    this.activeClients[client.id] = clientData;
+    let clientData = this.activeClients[client.id];
+    if (!clientData) {
+      const avatar = `https://api.dicebear.com/7.x/bottts/svg?seed=${username}`;
+      const user = await this.prisma.user.upsert({
+        where: { username },
+        update: {},
+        create: { username, avatar },
+      });
+      clientData = { userId: user.id, username: user.username, roomId };
+      this.activeClients[client.id] = clientData;
+    } else {
+      clientData.roomId = roomId;
+    }
 
     client.join(roomId);
 
@@ -535,7 +546,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const starterIdx = findAceOfSpadesPlayerIndex(room.players);
     room.currentTurn = starterIdx !== -1 ? starterIdx : 0;
 
-    this.server.to(roomId).emit('roomUpdated', room);
+    this.startTurnTimer(roomId);
     this.server.to(roomId).emit('chatMessage', {
       sender: 'System',
       text: `Bot game started with ${totalPlayers} players (${botCount} CPU). Ace of Spades must lead.`,
@@ -569,7 +580,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const starterIdx = findAceOfSpadesPlayerIndex(room.players);
     room.currentTurn = starterIdx !== -1 ? starterIdx : 0;
 
-    this.server.to(clientData.roomId).emit('roomUpdated', room);
+    this.startTurnTimer(clientData.roomId);
     this.server.to(clientData.roomId).emit('chatMessage', {
       sender: 'System',
       text: 'Game has started! Ace of Spades must lead.',
@@ -632,6 +643,58 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
+  private startTurnTimer(roomId: string) {
+    this.clearTurnTimer(roomId);
+
+    const room = this.rooms[roomId];
+    if (!room || room.status !== 'PLAYING') return;
+
+    room.turnStartedAt = Date.now();
+    this.server.to(roomId).emit('roomUpdated', room);
+
+    this.turnTimers[roomId] = setTimeout(() => {
+      this.handleTurnTimeout(roomId);
+    }, 20000);
+  }
+
+  private clearTurnTimer(roomId: string) {
+    if (this.turnTimers[roomId]) {
+      clearTimeout(this.turnTimers[roomId]);
+      delete this.turnTimers[roomId];
+    }
+  }
+
+  private handleTurnTimeout(roomId: string) {
+    const room = this.rooms[roomId];
+    if (!room || room.status !== 'PLAYING') return;
+
+    const currentPlayer = room.players[room.currentTurn];
+    if (!currentPlayer || currentPlayer.leftGame) return;
+
+    // Pick a card to play automatically
+    const validCards = currentPlayer.cards.filter(
+      c => isValidPlay(room, currentPlayer.id, c).valid
+    );
+
+    if (validCards.length > 0) {
+      const cardToPlay = validCards[Math.floor(Math.random() * validCards.length)];
+
+      this.server.to(roomId).emit('chatMessage', {
+        sender: 'System',
+        text: `${currentPlayer.username}'s turn timed out. Auto-playing ${cardToPlay.code}.`,
+      });
+
+      const trickRes = this.executePlay(roomId, currentPlayer.id, cardToPlay);
+
+      if (trickRes && trickRes.gameOver && room.loserId) {
+        void this.persistGameResults(room);
+        return;
+      }
+    }
+
+    void this.processBotTurns(roomId);
+  }
+
   private executePlay(roomId: string, playerId: string, card: Card): TrickResult | null {
     const room = this.rooms[roomId];
     if (!room || room.status !== 'PLAYING') return null;
@@ -645,7 +708,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     const trickRes = resolvePlay(room, playerId, card);
-    this.server.to(roomId).emit('roomUpdated', room);
+    this.startTurnTimer(roomId);
 
     const playerName = room.players.find(p => p.id === playerId)?.username || 'Someone';
 
@@ -696,6 +759,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   private async persistGameResults(room: GameState) {
+    this.clearTurnTimer(room.roomId);
     try {
       const dbMatch = await this.prisma.match.create({
         data: { roomCode: room.roomId, status: 'COMPLETED' },

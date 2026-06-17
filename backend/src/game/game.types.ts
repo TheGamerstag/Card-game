@@ -42,4 +42,5 @@ export interface GameState {
   pendingTakeRequests?: Record<string, string>;
   // Maps target player ID to trade request details
   pendingTradeRequests?: Record<string, { requesterId: string; offeredCardId: number; requestedCardId: number }>;
+  turnStartedAt?: number;
 }
