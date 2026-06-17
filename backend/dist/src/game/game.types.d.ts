@@ -30,4 +30,5 @@ export interface GameState {
     winnerOrder: string[];
     isBotRoom?: boolean;
     lastCompletedTrick: PlayAction[] | null;
+    pendingTakeRequests?: Record<string, string>;
 }
