@@ -25,13 +25,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
-  // In-memory active rooms state
   private rooms: Record<string, GameState> = {};
-  
-  // Maps socket.id to user database record details and current roomId
   private activeClients: Record<string, { userId: string; username: string; roomId?: string }> = {};
-
-  // Disconnect timeouts for users (keyed by userId)
   private disconnectTimeouts: Record<string, NodeJS.Timeout> = {};
 
   constructor(private prisma: PrismaService) {}
@@ -54,13 +49,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (this.disconnectTimeouts[userId]) {
       clearTimeout(this.disconnectTimeouts[userId]);
     }
-
     const room = this.rooms[roomId];
     if (!room) return;
-
-    // 2s delay in lobby, 15s delay in playing
     const delay = room.status === 'LOBBY' ? 2000 : 15000;
-
     this.disconnectTimeouts[userId] = setTimeout(() => {
       delete this.disconnectTimeouts[userId];
       this.removeUserFromRoom(userId, roomId);
@@ -70,12 +61,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private removeUserFromRoom(userId: string, roomId: string) {
     const room = this.rooms[roomId];
     if (!room) return;
-
     const pIndex = room.players.findIndex(p => p.id === userId);
     if (pIndex !== -1) {
       const username = room.players[pIndex].username;
       room.players.splice(pIndex, 1);
-      
+      // Clean up pending requests for this user
+      if (room.pendingTakeRequests) delete room.pendingTakeRequests[userId];
+      if (room.pendingTradeRequests) delete room.pendingTradeRequests[userId];
+
       this.server.to(roomId).emit('chatMessage', {
         sender: 'System',
         text: `${username} has left the room.`,
@@ -85,9 +78,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         delete this.rooms[roomId];
       } else {
         if (room.status === 'PLAYING' && room.currentTurn === pIndex) {
-          if (room.currentTurn >= room.players.length) {
-            room.currentTurn = 0;
-          }
+          if (room.currentTurn >= room.players.length) room.currentTurn = 0;
         }
         this.server.to(roomId).emit('roomUpdated', room);
       }
@@ -103,36 +94,25 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const user = await this.prisma.user.upsert({
       where: { username: data.username },
       update: {},
-      create: {
-        username: data.username,
-        avatar,
-      },
+      create: { username: data.username, avatar },
     });
 
-    this.activeClients[client.id] = {
-      userId: user.id,
-      username: user.username,
-    };
+    this.activeClients[client.id] = { userId: user.id, username: user.username };
 
-    // Reconnection check: Did this user belong to any active room?
+    // Reconnection: check if this user is in an active room
     const existingRoomId = Object.keys(this.rooms).find(roomId =>
       this.rooms[roomId].players.some(p => p.id === user.id)
     );
 
     if (existingRoomId) {
-      // Clear disconnect timeout
       if (this.disconnectTimeouts[user.id]) {
         clearTimeout(this.disconnectTimeouts[user.id]);
         delete this.disconnectTimeouts[user.id];
       }
-
-      // Map client to room
       this.activeClients[client.id].roomId = existingRoomId;
       client.join(existingRoomId);
-
       client.emit('registered', user);
       client.emit('roomUpdated', this.rooms[existingRoomId]);
-      
       this.server.to(existingRoomId).emit('chatMessage', {
         sender: 'System',
         text: `${user.username} has reconnected.`,
@@ -140,69 +120,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } else {
       client.emit('registered', user);
     }
-  }
-
-  @SubscribeMessage('requestTakeCards')
-  async handleRequestTakeCards(@ConnectedSocket() client: Socket, @MessageBody() data: { targetPlayerId: string }) {
-    const clientData = this.activeClients[client.id];
-    if (!clientData || !clientData.roomId) return;
-    const room = this.rooms[clientData.roomId];
-    if (!room || room.status !== 'LOBBY') return;
-    const requesterId = clientData.userId;
-    const targetId = data.targetPlayerId;
-    // Validate both players exist and are active
-    const requester = room.players.find(p => p.id === requesterId);
-    const target = room.players.find(p => p.id === targetId);
-    if (!requester || !target || target.leftGame) return;
-    // Register pending request
-    room.pendingTakeRequests = room.pendingTakeRequests || {};
-    room.pendingTakeRequests[targetId] = requesterId;
-    // Find socket id of target
-    const targetSocketId = Object.entries(this.activeClients).find(([,v]) => v.userId === targetId && v.roomId === room.roomId)?.[0];
-    if (targetSocketId) {
-      this.server.to(targetSocketId).emit('takeCardsRequest', { requesterId, requesterName: requester.username });
-    }
-  }
-
-  @SubscribeMessage('respondTakeCards')
-  async handleRespondTakeCards(@ConnectedSocket() client: Socket, @MessageBody() data: { targetPlayerId: string, accept: boolean }) {
-    const clientData = this.activeClients[client.id];
-    if (!clientData || !clientData.roomId) return;
-    const room = this.rooms[clientData.roomId];
-    if (!room) return;
-    const targetId = data.targetPlayerId;
-    const accept = data.accept;
-    const requesterId = room.pendingTakeRequests?.[targetId];
-    if (!requesterId) return;
-    const requester = room.players.find(p => p.id === requesterId);
-    const target = room.players.find(p => p.id === targetId);
-    if (!requester || !target) return;
-    if (accept) {
-      // Transfer cards
-      requester.cards.push(...target.cards);
-      target.cards = [];
-      target.leftGame = true;
-      // Assign finishing position (next available)
-      room.winnerOrder.push(target.id);
-      this.server.to(room.roomId).emit('chatMessage', {
-        sender: 'System',
-        text: `${target.username} accepted the card takeover from ${requester.username} and finished in position ${room.winnerOrder.length}.`,
-      });
-    } else {
-      // Decline notification
-      const targetSocketId = client.id; // this client is target
-      const requesterSocketId = Object.entries(this.activeClients).find(([,v]) => v.userId === requesterId && v.roomId === room.roomId)?.[0];
-      if (requesterSocketId) {
-        this.server.to(requesterSocketId).emit('chatMessage', {
-          sender: 'System',
-          text: `${target.username} declined the card takeover request from ${requester.username}.`,
-        });
-      }
-    }
-    // Clear pending request
-    delete room.pendingTakeRequests[targetId];
-    // Emit updated room state
-    this.server.to(room.roomId).emit('roomUpdated', room);
   }
 
   @SubscribeMessage('joinRoom')
@@ -230,12 +147,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         winnerOrder: [],
         lastCompletedTrick: null,
         pendingTakeRequests: {},
+        pendingTradeRequests: {},
       };
     }
 
     const room = this.rooms[roomId];
-
-    // Avoid duplicate additions using stable userId
     if (!room.players.some(p => p.id === clientData.userId)) {
       room.players.push({
         id: clientData.userId,
@@ -271,16 +187,225 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   handleToggleReady(@ConnectedSocket() client: Socket) {
     const clientData = this.activeClients[client.id];
     if (!clientData || !clientData.roomId) return;
-
     const room = this.rooms[clientData.roomId];
     if (!room) return;
-
     const player = room.players.find(p => p.id === clientData.userId);
     if (player) {
       player.isReady = !player.isReady;
       this.server.to(clientData.roomId).emit('roomUpdated', room);
     }
   }
+
+  // ── Take Cards ─────────────────────────────────────────────────────────────
+
+  @SubscribeMessage('requestTakeCards')
+  handleRequestTakeCards(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { targetPlayerId: string }
+  ) {
+    const clientData = this.activeClients[client.id];
+    if (!clientData || !clientData.roomId) return;
+    const room = this.rooms[clientData.roomId];
+    if (!room) return;
+
+    const requesterId = clientData.userId;
+    const targetId = data.targetPlayerId;
+    const requester = room.players.find(p => p.id === requesterId);
+    const target = room.players.find(p => p.id === targetId);
+    if (!requester || !target || target.leftGame) return;
+
+    room.pendingTakeRequests = room.pendingTakeRequests || {};
+    room.pendingTakeRequests[targetId] = requesterId;
+
+    const targetSocketId = Object.entries(this.activeClients)
+      .find(([, v]) => v.userId === targetId && v.roomId === room.roomId)?.[0];
+    if (targetSocketId) {
+      this.server.to(targetSocketId).emit('takeCardsRequest', {
+        requesterId,
+        requesterName: requester.username,
+      });
+    }
+  }
+
+  @SubscribeMessage('respondTakeCards')
+  handleRespondTakeCards(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { targetPlayerId: string; accept: boolean }
+  ) {
+    const clientData = this.activeClients[client.id];
+    if (!clientData || !clientData.roomId) return;
+    const room = this.rooms[clientData.roomId];
+    if (!room) return;
+
+    const targetId = data.targetPlayerId;
+    const requesterId = room.pendingTakeRequests?.[targetId];
+    if (!requesterId) return;
+
+    const requester = room.players.find(p => p.id === requesterId);
+    const target = room.players.find(p => p.id === targetId);
+    if (!requester || !target) return;
+
+    if (data.accept) {
+      requester.cards.push(...target.cards);
+      target.cards = [];
+      target.leftGame = true;
+      room.winnerOrder.push(target.id);
+      this.server.to(room.roomId).emit('chatMessage', {
+        sender: 'System',
+        text: `${target.username} accepted the card takeover from ${requester.username} and finished in position #${room.winnerOrder.length}.`,
+      });
+    } else {
+      const requesterSocketId = Object.entries(this.activeClients)
+        .find(([, v]) => v.userId === requesterId && v.roomId === room.roomId)?.[0];
+      if (requesterSocketId) {
+        this.server.to(requesterSocketId).emit('chatMessage', {
+          sender: 'System',
+          text: `${target.username} declined your card takeover request.`,
+        });
+      }
+    }
+
+    delete room.pendingTakeRequests![targetId];
+    this.server.to(room.roomId).emit('roomUpdated', room);
+  }
+
+  // ── Trade Cards ────────────────────────────────────────────────────────────
+
+  @SubscribeMessage('requestTradeCards')
+  handleRequestTradeCards(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { targetPlayerId: string; offeredCardId: number; requestedCardId: number }
+  ) {
+    const clientData = this.activeClients[client.id];
+    if (!clientData || !clientData.roomId) return;
+    const room = this.rooms[clientData.roomId];
+    if (!room || room.status !== 'LOBBY') return;
+
+    const requesterId = clientData.userId;
+    const { targetPlayerId: targetId, offeredCardId, requestedCardId } = data;
+    const requester = room.players.find(p => p.id === requesterId);
+    const target = room.players.find(p => p.id === targetId);
+    if (!requester || !target || target.leftGame) return;
+
+    // Verify requester owns the offered card
+    const offeredCard = requester.cards.find(c => c.id === offeredCardId);
+    const requestedCard = target.cards.find(c => c.id === requestedCardId);
+    if (!offeredCard || !requestedCard) return;
+
+    room.pendingTradeRequests = room.pendingTradeRequests || {};
+    room.pendingTradeRequests[targetId] = { requesterId, offeredCardId, requestedCardId };
+
+    const targetSocketId = Object.entries(this.activeClients)
+      .find(([, v]) => v.userId === targetId && v.roomId === room.roomId)?.[0];
+    if (targetSocketId) {
+      this.server.to(targetSocketId).emit('tradeRequest', {
+        requesterId,
+        requesterName: requester.username,
+        targetId,
+        offeredCardId,
+        requestedCardId,
+        offeredCard,
+        requestedCard,
+      });
+    }
+  }
+
+  @SubscribeMessage('respondTradeCards')
+  handleRespondTradeCards(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { targetPlayerId: string; accept: boolean }
+  ) {
+    const clientData = this.activeClients[client.id];
+    if (!clientData || !clientData.roomId) return;
+    const room = this.rooms[clientData.roomId];
+    if (!room) return;
+
+    const targetId = data.targetPlayerId;
+    const pending = room.pendingTradeRequests?.[targetId];
+    if (!pending) return;
+
+    const requester = room.players.find(p => p.id === pending.requesterId);
+    const target = room.players.find(p => p.id === targetId);
+    if (!requester || !target) return;
+
+    if (data.accept) {
+      const offeredIdx = requester.cards.findIndex(c => c.id === pending.offeredCardId);
+      const requestedIdx = target.cards.findIndex(c => c.id === pending.requestedCardId);
+      if (offeredIdx !== -1 && requestedIdx !== -1) {
+        const offeredCard = requester.cards[offeredIdx];
+        const requestedCard = target.cards[requestedIdx];
+        requester.cards[offeredIdx] = requestedCard;
+        target.cards[requestedIdx] = offeredCard;
+        this.server.to(room.roomId).emit('chatMessage', {
+          sender: 'System',
+          text: `${requester.username} traded ${offeredCard.code} for ${target.username}'s ${requestedCard.code}.`,
+        });
+      }
+    } else {
+      const requesterSocketId = Object.entries(this.activeClients)
+        .find(([, v]) => v.userId === pending.requesterId && v.roomId === room.roomId)?.[0];
+      if (requesterSocketId) {
+        this.server.to(requesterSocketId).emit('chatMessage', {
+          sender: 'System',
+          text: `${target.username} declined your trade request.`,
+        });
+      }
+    }
+
+    delete room.pendingTradeRequests![targetId];
+    this.server.to(room.roomId).emit('roomUpdated', room);
+  }
+
+  // ── Play Again ─────────────────────────────────────────────────────────────
+
+  @SubscribeMessage('playAgainReady')
+  handlePlayAgainReady(@ConnectedSocket() client: Socket) {
+    const clientData = this.activeClients[client.id];
+    if (!clientData || !clientData.roomId) return;
+    const room = this.rooms[clientData.roomId];
+    if (!room || room.status !== 'GAME_OVER') return;
+
+    const player = room.players.find(p => p.id === clientData.userId);
+    if (!player) return;
+
+    player.isReadyForNext = true;
+    this.server.to(clientData.roomId).emit('roomUpdated', room);
+    this.maybeStartNextMatch(room.roomId);
+  }
+
+  private maybeStartNextMatch(roomId: string) {
+    const room = this.rooms[roomId];
+    if (!room) return;
+    const readyPlayers = room.players.filter(p => p.isReadyForNext);
+    if (readyPlayers.length < 3) return;
+
+    // Keep only ready players, reset state
+    room.players = readyPlayers.map(p => ({
+      ...p,
+      cards: [],
+      isReady: false,
+      isReadyForNext: false,
+      leftGame: false,
+    }));
+    room.status = 'LOBBY';
+    room.deck = [];
+    room.currentTurn = 0;
+    room.currentSuit = null;
+    room.trickCards = [];
+    room.loserId = null;
+    room.winnerOrder = [];
+    room.lastCompletedTrick = null;
+    room.pendingTakeRequests = {};
+    room.pendingTradeRequests = {};
+
+    this.server.to(roomId).emit('roomUpdated', room);
+    this.server.to(roomId).emit('chatMessage', {
+      sender: 'System',
+      text: `New match starting with ${readyPlayers.length} players. Get ready!`,
+    });
+  }
+
+  // ── Bot Game ───────────────────────────────────────────────────────────────
 
   @SubscribeMessage('startBotGame')
   handleStartBotGame(
@@ -339,6 +464,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       isBotRoom: true,
       lastCompletedTrick: null,
       pendingTakeRequests: {},
+      pendingTradeRequests: {},
     };
 
     const room = this.rooms[roomId];
@@ -365,11 +491,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   handleStartGame(@ConnectedSocket() client: Socket) {
     const clientData = this.activeClients[client.id];
     if (!clientData || !clientData.roomId) return;
-
     const room = this.rooms[clientData.roomId];
     if (!room) return;
 
-    // Minimum 3 players required for Thulla standard rule
     if (room.players.length < 3) {
       client.emit('error', 'Requires at least 3 players to start!');
       return;
@@ -382,9 +506,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     room.trickCards = [];
     room.currentSuit = null;
     room.lastCompletedTrick = null;
-    room.pendingTakeRequests = {}; // clear any pending take requests
+    room.pendingTakeRequests = {};
+    room.pendingTradeRequests = {};
 
-    // Find the player holding Ace of Spades (starts the trick)
     const starterIdx = findAceOfSpadesPlayerIndex(room.players);
     room.currentTurn = starterIdx !== -1 ? starterIdx : 0;
 
@@ -402,7 +526,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const clientData = this.activeClients[client.id];
     if (!clientData || !clientData.roomId) return;
-
     const room = this.rooms[clientData.roomId];
     if (!room) return;
 
@@ -433,7 +556,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const clientData = this.activeClients[client.id];
     if (!clientData || !clientData.roomId) return;
-
     this.server.to(clientData.roomId).emit('chatMessage', {
       sender: clientData.username,
       text: message,
@@ -447,7 +569,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const clientData = this.activeClients[client.id];
     if (!clientData || !clientData.roomId) return;
-
     this.server.to(clientData.roomId).emit('reaction', {
       playerId: clientData.userId,
       emoji,
@@ -515,38 +636,21 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private async persistGameResults(room: GameState) {
     try {
       const dbMatch = await this.prisma.match.create({
-        data: {
-          roomCode: room.roomId,
-          status: 'COMPLETED',
-        },
+        data: { roomCode: room.roomId, status: 'COMPLETED' },
       });
 
-      // Map connection IDs to usernames or user DB accounts (skip CPU bots)
       for (const p of room.players) {
         if (p.isBot) continue;
-
-        const uRec = await this.prisma.user.findUnique({
-          where: { username: p.username },
-        });
+        const uRec = await this.prisma.user.findUnique({ where: { username: p.username } });
         if (uRec) {
           const isWinner = room.winnerOrder[0] === p.id;
           const isLoser = room.loserId === p.id;
-          
-          let coinsChange = 10; // participation
+          let coinsChange = 10;
           let xpEarned = 50;
           let rankChange = 5;
+          if (isWinner) { coinsChange = 100; xpEarned = 250; rankChange = 25; }
+          else if (isLoser) { coinsChange = -50; xpEarned = 10; rankChange = -15; }
 
-          if (isWinner) {
-            coinsChange = 100;
-            xpEarned = 250;
-            rankChange = 25;
-          } else if (isLoser) {
-            coinsChange = -50;
-            xpEarned = 10;
-            rankChange = -15;
-          }
-
-          // Apply DB adjustments
           await this.prisma.user.update({
             where: { id: uRec.id },
             data: {
@@ -559,14 +663,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           });
 
           await this.prisma.matchPlayer.create({
-            data: {
-              matchId: dbMatch.id,
-              userId: uRec.id,
-              isWinner,
-              xpEarned,
-              coinsChange,
-              rankChange,
-            },
+            data: { matchId: dbMatch.id, userId: uRec.id, isWinner, xpEarned, coinsChange, rankChange },
           });
         }
       }

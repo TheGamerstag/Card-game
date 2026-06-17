@@ -15,6 +15,7 @@ export interface Player {
   avatar?: string;
   cards: Card[];
   isReady: boolean;
+  isReadyForNext?: boolean; // ready for next match after game over
   leftGame: boolean; // safe / leaves game after playing all cards
   isBot?: boolean;
 }
@@ -38,4 +39,6 @@ export interface GameState {
   lastCompletedTrick: PlayAction[] | null;
   // Maps target player ID to requester ID for pending take cards requests
   pendingTakeRequests?: Record<string, string>;
+  // Maps target player ID to trade request details
+  pendingTradeRequests?: Record<string, { requesterId: string; offeredCardId: number; requestedCardId: number }>;
 }

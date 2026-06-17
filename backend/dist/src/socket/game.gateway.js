@@ -61,6 +61,10 @@ let GameGateway = class GameGateway {
         if (pIndex !== -1) {
             const username = room.players[pIndex].username;
             room.players.splice(pIndex, 1);
+            if (room.pendingTakeRequests)
+                delete room.pendingTakeRequests[userId];
+            if (room.pendingTradeRequests)
+                delete room.pendingTradeRequests[userId];
             this.server.to(roomId).emit('chatMessage', {
                 sender: 'System',
                 text: `${username} has left the room.`,
@@ -70,9 +74,8 @@ let GameGateway = class GameGateway {
             }
             else {
                 if (room.status === 'PLAYING' && room.currentTurn === pIndex) {
-                    if (room.currentTurn >= room.players.length) {
+                    if (room.currentTurn >= room.players.length)
                         room.currentTurn = 0;
-                    }
                 }
                 this.server.to(roomId).emit('roomUpdated', room);
             }
@@ -83,15 +86,9 @@ let GameGateway = class GameGateway {
         const user = await this.prisma.user.upsert({
             where: { username: data.username },
             update: {},
-            create: {
-                username: data.username,
-                avatar,
-            },
+            create: { username: data.username, avatar },
         });
-        this.activeClients[client.id] = {
-            userId: user.id,
-            username: user.username,
-        };
+        this.activeClients[client.id] = { userId: user.id, username: user.username };
         const existingRoomId = Object.keys(this.rooms).find(roomId => this.rooms[roomId].players.some(p => p.id === user.id));
         if (existingRoomId) {
             if (this.disconnectTimeouts[user.id]) {
@@ -110,65 +107,6 @@ let GameGateway = class GameGateway {
         else {
             client.emit('registered', user);
         }
-    }
-    async handleRequestTakeCards(client, data) {
-        const clientData = this.activeClients[client.id];
-        if (!clientData || !clientData.roomId)
-            return;
-        const room = this.rooms[clientData.roomId];
-        if (!room || room.status !== 'LOBBY')
-            return;
-        const requesterId = clientData.userId;
-        const targetId = data.targetPlayerId;
-        const requester = room.players.find(p => p.id === requesterId);
-        const target = room.players.find(p => p.id === targetId);
-        if (!requester || !target || target.leftGame)
-            return;
-        room.pendingTakeRequests = room.pendingTakeRequests || {};
-        room.pendingTakeRequests[targetId] = requesterId;
-        const targetSocketId = Object.entries(this.activeClients).find(([, v]) => v.userId === targetId && v.roomId === room.roomId)?.[0];
-        if (targetSocketId) {
-            this.server.to(targetSocketId).emit('takeCardsRequest', { requesterId, requesterName: requester.username });
-        }
-    }
-    async handleRespondTakeCards(client, data) {
-        const clientData = this.activeClients[client.id];
-        if (!clientData || !clientData.roomId)
-            return;
-        const room = this.rooms[clientData.roomId];
-        if (!room)
-            return;
-        const targetId = data.targetPlayerId;
-        const accept = data.accept;
-        const requesterId = room.pendingTakeRequests?.[targetId];
-        if (!requesterId)
-            return;
-        const requester = room.players.find(p => p.id === requesterId);
-        const target = room.players.find(p => p.id === targetId);
-        if (!requester || !target)
-            return;
-        if (accept) {
-            requester.cards.push(...target.cards);
-            target.cards = [];
-            target.leftGame = true;
-            room.winnerOrder.push(target.id);
-            this.server.to(room.roomId).emit('chatMessage', {
-                sender: 'System',
-                text: `${target.username} accepted the card takeover from ${requester.username} and finished in position ${room.winnerOrder.length}.`,
-            });
-        }
-        else {
-            const targetSocketId = client.id;
-            const requesterSocketId = Object.entries(this.activeClients).find(([, v]) => v.userId === requesterId && v.roomId === room.roomId)?.[0];
-            if (requesterSocketId) {
-                this.server.to(requesterSocketId).emit('chatMessage', {
-                    sender: 'System',
-                    text: `${target.username} declined the card takeover request from ${requester.username}.`,
-                });
-            }
-        }
-        delete room.pendingTakeRequests[targetId];
-        this.server.to(room.roomId).emit('roomUpdated', room);
     }
     handleJoinRoom(client, data) {
         const { roomId, username } = data;
@@ -189,6 +127,7 @@ let GameGateway = class GameGateway {
                 winnerOrder: [],
                 lastCompletedTrick: null,
                 pendingTakeRequests: {},
+                pendingTradeRequests: {},
             };
         }
         const room = this.rooms[roomId];
@@ -228,6 +167,187 @@ let GameGateway = class GameGateway {
             player.isReady = !player.isReady;
             this.server.to(clientData.roomId).emit('roomUpdated', room);
         }
+    }
+    handleRequestTakeCards(client, data) {
+        const clientData = this.activeClients[client.id];
+        if (!clientData || !clientData.roomId)
+            return;
+        const room = this.rooms[clientData.roomId];
+        if (!room)
+            return;
+        const requesterId = clientData.userId;
+        const targetId = data.targetPlayerId;
+        const requester = room.players.find(p => p.id === requesterId);
+        const target = room.players.find(p => p.id === targetId);
+        if (!requester || !target || target.leftGame)
+            return;
+        room.pendingTakeRequests = room.pendingTakeRequests || {};
+        room.pendingTakeRequests[targetId] = requesterId;
+        const targetSocketId = Object.entries(this.activeClients)
+            .find(([, v]) => v.userId === targetId && v.roomId === room.roomId)?.[0];
+        if (targetSocketId) {
+            this.server.to(targetSocketId).emit('takeCardsRequest', {
+                requesterId,
+                requesterName: requester.username,
+            });
+        }
+    }
+    handleRespondTakeCards(client, data) {
+        const clientData = this.activeClients[client.id];
+        if (!clientData || !clientData.roomId)
+            return;
+        const room = this.rooms[clientData.roomId];
+        if (!room)
+            return;
+        const targetId = data.targetPlayerId;
+        const requesterId = room.pendingTakeRequests?.[targetId];
+        if (!requesterId)
+            return;
+        const requester = room.players.find(p => p.id === requesterId);
+        const target = room.players.find(p => p.id === targetId);
+        if (!requester || !target)
+            return;
+        if (data.accept) {
+            requester.cards.push(...target.cards);
+            target.cards = [];
+            target.leftGame = true;
+            room.winnerOrder.push(target.id);
+            this.server.to(room.roomId).emit('chatMessage', {
+                sender: 'System',
+                text: `${target.username} accepted the card takeover from ${requester.username} and finished in position #${room.winnerOrder.length}.`,
+            });
+        }
+        else {
+            const requesterSocketId = Object.entries(this.activeClients)
+                .find(([, v]) => v.userId === requesterId && v.roomId === room.roomId)?.[0];
+            if (requesterSocketId) {
+                this.server.to(requesterSocketId).emit('chatMessage', {
+                    sender: 'System',
+                    text: `${target.username} declined your card takeover request.`,
+                });
+            }
+        }
+        delete room.pendingTakeRequests[targetId];
+        this.server.to(room.roomId).emit('roomUpdated', room);
+    }
+    handleRequestTradeCards(client, data) {
+        const clientData = this.activeClients[client.id];
+        if (!clientData || !clientData.roomId)
+            return;
+        const room = this.rooms[clientData.roomId];
+        if (!room || room.status !== 'LOBBY')
+            return;
+        const requesterId = clientData.userId;
+        const { targetPlayerId: targetId, offeredCardId, requestedCardId } = data;
+        const requester = room.players.find(p => p.id === requesterId);
+        const target = room.players.find(p => p.id === targetId);
+        if (!requester || !target || target.leftGame)
+            return;
+        const offeredCard = requester.cards.find(c => c.id === offeredCardId);
+        const requestedCard = target.cards.find(c => c.id === requestedCardId);
+        if (!offeredCard || !requestedCard)
+            return;
+        room.pendingTradeRequests = room.pendingTradeRequests || {};
+        room.pendingTradeRequests[targetId] = { requesterId, offeredCardId, requestedCardId };
+        const targetSocketId = Object.entries(this.activeClients)
+            .find(([, v]) => v.userId === targetId && v.roomId === room.roomId)?.[0];
+        if (targetSocketId) {
+            this.server.to(targetSocketId).emit('tradeRequest', {
+                requesterId,
+                requesterName: requester.username,
+                targetId,
+                offeredCardId,
+                requestedCardId,
+                offeredCard,
+                requestedCard,
+            });
+        }
+    }
+    handleRespondTradeCards(client, data) {
+        const clientData = this.activeClients[client.id];
+        if (!clientData || !clientData.roomId)
+            return;
+        const room = this.rooms[clientData.roomId];
+        if (!room)
+            return;
+        const targetId = data.targetPlayerId;
+        const pending = room.pendingTradeRequests?.[targetId];
+        if (!pending)
+            return;
+        const requester = room.players.find(p => p.id === pending.requesterId);
+        const target = room.players.find(p => p.id === targetId);
+        if (!requester || !target)
+            return;
+        if (data.accept) {
+            const offeredIdx = requester.cards.findIndex(c => c.id === pending.offeredCardId);
+            const requestedIdx = target.cards.findIndex(c => c.id === pending.requestedCardId);
+            if (offeredIdx !== -1 && requestedIdx !== -1) {
+                const offeredCard = requester.cards[offeredIdx];
+                const requestedCard = target.cards[requestedIdx];
+                requester.cards[offeredIdx] = requestedCard;
+                target.cards[requestedIdx] = offeredCard;
+                this.server.to(room.roomId).emit('chatMessage', {
+                    sender: 'System',
+                    text: `${requester.username} traded ${offeredCard.code} for ${target.username}'s ${requestedCard.code}.`,
+                });
+            }
+        }
+        else {
+            const requesterSocketId = Object.entries(this.activeClients)
+                .find(([, v]) => v.userId === pending.requesterId && v.roomId === room.roomId)?.[0];
+            if (requesterSocketId) {
+                this.server.to(requesterSocketId).emit('chatMessage', {
+                    sender: 'System',
+                    text: `${target.username} declined your trade request.`,
+                });
+            }
+        }
+        delete room.pendingTradeRequests[targetId];
+        this.server.to(room.roomId).emit('roomUpdated', room);
+    }
+    handlePlayAgainReady(client) {
+        const clientData = this.activeClients[client.id];
+        if (!clientData || !clientData.roomId)
+            return;
+        const room = this.rooms[clientData.roomId];
+        if (!room || room.status !== 'GAME_OVER')
+            return;
+        const player = room.players.find(p => p.id === clientData.userId);
+        if (!player)
+            return;
+        player.isReadyForNext = true;
+        this.server.to(clientData.roomId).emit('roomUpdated', room);
+        this.maybeStartNextMatch(room.roomId);
+    }
+    maybeStartNextMatch(roomId) {
+        const room = this.rooms[roomId];
+        if (!room)
+            return;
+        const readyPlayers = room.players.filter(p => p.isReadyForNext);
+        if (readyPlayers.length < 3)
+            return;
+        room.players = readyPlayers.map(p => ({
+            ...p,
+            cards: [],
+            isReady: false,
+            isReadyForNext: false,
+            leftGame: false,
+        }));
+        room.status = 'LOBBY';
+        room.deck = [];
+        room.currentTurn = 0;
+        room.currentSuit = null;
+        room.trickCards = [];
+        room.loserId = null;
+        room.winnerOrder = [];
+        room.lastCompletedTrick = null;
+        room.pendingTakeRequests = {};
+        room.pendingTradeRequests = {};
+        this.server.to(roomId).emit('roomUpdated', room);
+        this.server.to(roomId).emit('chatMessage', {
+            sender: 'System',
+            text: `New match starting with ${readyPlayers.length} players. Get ready!`,
+        });
     }
     handleStartBotGame(client, data) {
         const clientData = this.activeClients[client.id];
@@ -277,6 +397,7 @@ let GameGateway = class GameGateway {
             isBotRoom: true,
             lastCompletedTrick: null,
             pendingTakeRequests: {},
+            pendingTradeRequests: {},
         };
         const room = this.rooms[roomId];
         (0, game_engine_1.dealCards)(room.players);
@@ -313,6 +434,7 @@ let GameGateway = class GameGateway {
         room.currentSuit = null;
         room.lastCompletedTrick = null;
         room.pendingTakeRequests = {};
+        room.pendingTradeRequests = {};
         const starterIdx = (0, game_engine_1.findAceOfSpadesPlayerIndex)(room.players);
         room.currentTurn = starterIdx !== -1 ? starterIdx : 0;
         this.server.to(clientData.roomId).emit('roomUpdated', room);
@@ -418,17 +540,12 @@ let GameGateway = class GameGateway {
     async persistGameResults(room) {
         try {
             const dbMatch = await this.prisma.match.create({
-                data: {
-                    roomCode: room.roomId,
-                    status: 'COMPLETED',
-                },
+                data: { roomCode: room.roomId, status: 'COMPLETED' },
             });
             for (const p of room.players) {
                 if (p.isBot)
                     continue;
-                const uRec = await this.prisma.user.findUnique({
-                    where: { username: p.username },
-                });
+                const uRec = await this.prisma.user.findUnique({ where: { username: p.username } });
                 if (uRec) {
                     const isWinner = room.winnerOrder[0] === p.id;
                     const isLoser = room.loserId === p.id;
@@ -456,14 +573,7 @@ let GameGateway = class GameGateway {
                         },
                     });
                     await this.prisma.matchPlayer.create({
-                        data: {
-                            matchId: dbMatch.id,
-                            userId: uRec.id,
-                            isWinner,
-                            xpEarned,
-                            coinsChange,
-                            rankChange,
-                        },
+                        data: { matchId: dbMatch.id, userId: uRec.id, isWinner, xpEarned, coinsChange, rankChange },
                     });
                 }
             }
@@ -491,22 +601,6 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], GameGateway.prototype, "handleRegisterGuest", null);
 __decorate([
-    (0, websockets_1.SubscribeMessage)('requestTakeCards'),
-    __param(0, (0, websockets_1.ConnectedSocket)()),
-    __param(1, (0, websockets_1.MessageBody)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [socket_io_1.Socket, Object]),
-    __metadata("design:returntype", Promise)
-], GameGateway.prototype, "handleRequestTakeCards", null);
-__decorate([
-    (0, websockets_1.SubscribeMessage)('respondTakeCards'),
-    __param(0, (0, websockets_1.ConnectedSocket)()),
-    __param(1, (0, websockets_1.MessageBody)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [socket_io_1.Socket, Object]),
-    __metadata("design:returntype", Promise)
-], GameGateway.prototype, "handleRespondTakeCards", null);
-__decorate([
     (0, websockets_1.SubscribeMessage)('joinRoom'),
     __param(0, (0, websockets_1.ConnectedSocket)()),
     __param(1, (0, websockets_1.MessageBody)()),
@@ -529,6 +623,45 @@ __decorate([
     __metadata("design:paramtypes", [socket_io_1.Socket]),
     __metadata("design:returntype", void 0)
 ], GameGateway.prototype, "handleToggleReady", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('requestTakeCards'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __param(1, (0, websockets_1.MessageBody)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket, Object]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handleRequestTakeCards", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('respondTakeCards'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __param(1, (0, websockets_1.MessageBody)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket, Object]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handleRespondTakeCards", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('requestTradeCards'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __param(1, (0, websockets_1.MessageBody)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket, Object]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handleRequestTradeCards", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('respondTradeCards'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __param(1, (0, websockets_1.MessageBody)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket, Object]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handleRespondTradeCards", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('playAgainReady'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket]),
+    __metadata("design:returntype", void 0)
+], GameGateway.prototype, "handlePlayAgainReady", null);
 __decorate([
     (0, websockets_1.SubscribeMessage)('startBotGame'),
     __param(0, (0, websockets_1.ConnectedSocket)()),

@@ -15,19 +15,30 @@ export declare class GameGateway implements OnGatewayConnection, OnGatewayDiscon
     handleRegisterGuest(client: Socket, data: {
         username: string;
     }): Promise<void>;
-    handleRequestTakeCards(client: Socket, data: {
-        targetPlayerId: string;
-    }): Promise<void>;
-    handleRespondTakeCards(client: Socket, data: {
-        targetPlayerId: string;
-        accept: boolean;
-    }): Promise<void>;
     handleJoinRoom(client: Socket, data: {
         roomId: string;
         username: string;
     }): void;
     handleLeaveRoom(client: Socket, roomId: string): void;
     handleToggleReady(client: Socket): void;
+    handleRequestTakeCards(client: Socket, data: {
+        targetPlayerId: string;
+    }): void;
+    handleRespondTakeCards(client: Socket, data: {
+        targetPlayerId: string;
+        accept: boolean;
+    }): void;
+    handleRequestTradeCards(client: Socket, data: {
+        targetPlayerId: string;
+        offeredCardId: number;
+        requestedCardId: number;
+    }): void;
+    handleRespondTradeCards(client: Socket, data: {
+        targetPlayerId: string;
+        accept: boolean;
+    }): void;
+    handlePlayAgainReady(client: Socket): void;
+    private maybeStartNextMatch;
     handleStartBotGame(client: Socket, data: {
         totalPlayers: number;
     }): void;

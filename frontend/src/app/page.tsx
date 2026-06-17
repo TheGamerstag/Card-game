@@ -1,10 +1,11 @@
-// frontend/src/app/page.tsx
+// frontend/src/app/page.tsx — updated
 'use client';
 
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useSocket } from '../hooks/useSocket';
 import { PlayingCard } from '../components/PlayingCard';
 import TakeCardsModal from '../components/TakeCardsModal';
+import TradeRequestModal from '../components/TradeRequestModal';
 import { BrandLogo } from '../components/BrandLogo';
 import { SiteFooter } from '../components/SiteFooter';
 import {
@@ -46,6 +47,8 @@ function GameAppContent() {
     chatMessages,
     myUser,
     errorMsg,
+    takeRequest,
+    tradeRequest,
     registerGuest,
     joinRoom,
     leaveRoom,
@@ -57,6 +60,9 @@ function GameAppContent() {
     sendEmojiReaction,
     requestTakeCards,
     respondTakeCards,
+    requestTradeCards,
+    respondTradeCards,
+    playAgainReady,
     socket,
   } = useSocket();
 
@@ -74,22 +80,11 @@ function GameAppContent() {
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [botPlayerCount, setBotPlayerCount] = useState(4);
   const [isChatOpen, setIsChatOpen] = useState(false);
-  // State for incoming take cards request modal
-  const [takeRequest, setTakeRequest] = useState<{ requesterId: string; requesterName: string } | null>(null);
+  // Trade UI state — which card I've selected to offer
+  const [selectedOfferedCardId, setSelectedOfferedCardId] = useState<number | null>(null);
+  const [tradeTargetId, setTradeTargetId] = useState<string | null>(null);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
-  // Listen for take cards request from server
-  useEffect(() => {
-    if (socket) {
-      const handler = (data: { requesterId: string; requesterName: string }) => {
-        setTakeRequest({ requesterId: data.requesterId, requesterName: data.requesterName });
-      };
-      socket.on('takeCardsRequest', handler);
-      return () => {
-        socket.off('takeCardsRequest', handler);
-      };
-    }
-  }, [socket]);
 
   // Auto-scroll chat to bottom
   useEffect(() => {
@@ -456,21 +451,71 @@ function GameAppContent() {
                       <div className="space-y-3 text-left">
                         <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Players list</div>
                         {gameState.players.map((p) => (
-                          <div key={p.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 border border-slate-900">
-                            <div className="flex items-center gap-2">
-                              <img src={p.avatar} alt="Avatar" className="w-8 h-8" />
-                              <span className="font-medium text-sm text-white">{p.username}</span>
+                          <div key={p.id} className="flex flex-col gap-2 p-3 rounded-xl bg-slate-950/50 border border-slate-900">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <img src={p.avatar} alt="Avatar" className="w-8 h-8 rounded-full" />
+                                <span className="font-medium text-sm text-white">{p.username}</span>
+                              </div>
+                              <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${p.isReady ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                {p.isReady ? 'Ready' : 'Not Ready'}
+                              </span>
                             </div>
-                            <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${p.isReady ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
-                              {p.isReady ? 'Ready' : 'Not Ready'}
-                            </span>
-                            {p.id !== myUser?.id && (
-                              <button
-                                onClick={() => requestTakeCards(p.id)}
-                                className="ml-2 py-1 px-2 btn-secondary text-xs rounded"
-                              >
-                                Request Cards
-                              </button>
+                            {/* Actions for other players */}
+                            {p.id !== myUser?.id && !p.leftGame && (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => requestTakeCards(p.id)}
+                                  className="flex-1 py-1 px-2 text-xs font-semibold rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 hover:bg-amber-500/20 transition-all"
+                                >
+                                  🃏 Take All Cards
+                                </button>
+                                {/* Trade: pick a card from your hand to offer */}
+                                {myUser && gameState.players.find(me => me.id === myUser.id)?.cards.length ? (
+                                  <select
+                                    className="flex-1 py-1 px-2 text-xs rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 hover:bg-blue-500/20 transition-all cursor-pointer"
+                                    defaultValue=""
+                                    onChange={(e) => {
+                                      if (e.target.value) {
+                                        setSelectedOfferedCardId(Number(e.target.value));
+                                        setTradeTargetId(p.id);
+                                      }
+                                    }}
+                                  >
+                                    <option value="" disabled>🔄 Offer card…</option>
+                                    {gameState.players.find(me => me.id === myUser.id)?.cards.map(c => (
+                                      <option key={c.id} value={c.id}>{c.code}</option>
+                                    ))}
+                                  </select>
+                                ) : null}
+                              </div>
+                            )}
+                            {/* Step 2: pick which of target's cards you want */}
+                            {tradeTargetId === p.id && selectedOfferedCardId !== null && (
+                              <div className="flex flex-col gap-1.5 mt-1 p-2 rounded-lg bg-black/40 border border-blue-500/20">
+                                <p className="text-[10px] text-blue-300 font-semibold">Select {p.username}&apos;s card to request:</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {p.cards.map(c => (
+                                    <button
+                                      key={c.id}
+                                      onClick={() => {
+                                        requestTradeCards(p.id, selectedOfferedCardId, c.id);
+                                        setSelectedOfferedCardId(null);
+                                        setTradeTargetId(null);
+                                      }}
+                                      className="px-2 py-1 text-xs font-bold rounded bg-blue-600 hover:bg-blue-500 text-white transition-all"
+                                    >
+                                      {c.code}
+                                    </button>
+                                  ))}
+                                  <button
+                                    onClick={() => { setSelectedOfferedCardId(null); setTradeTargetId(null); }}
+                                    className="px-2 py-1 text-xs rounded bg-white/5 text-slate-400 hover:bg-white/10 transition-all"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
                             )}
                           </div>
                         ))}
@@ -597,29 +642,70 @@ function GameAppContent() {
                       </div>
 
                       {gameState.status === 'GAME_OVER' && (
-                        <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center text-center p-6 z-30">
-                          <h2 className="text-3xl sm:text-4xl font-extrabold text-red-500 mb-2">GAME OVER</h2>
+                        <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center text-center p-6 z-30 overflow-y-auto">
+                          <div className="text-5xl mb-3">🏆</div>
+                          <h2 className="text-3xl sm:text-4xl font-extrabold text-red-500 mb-4">GAME OVER</h2>
+
+                          {/* Final Rankings */}
+                          <div className="w-full max-w-xs mb-5 space-y-2">
+                            {gameState.winnerOrder.map((pid, idx) => {
+                              const p = gameState.players.find(pl => pl.id === pid);
+                              return p ? (
+                                <div key={pid} className="flex items-center justify-between px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                                  <span className="text-emerald-400 font-bold text-sm">#{idx + 1}</span>
+                                  <span className="text-white font-semibold text-sm">{p.username}</span>
+                                  <span className="text-emerald-400 text-xs">Safe ✓</span>
+                                </div>
+                              ) : null;
+                            })}
+                            {gameState.loserId && (() => {
+                              const loser = gameState.players.find(p => p.id === gameState.loserId);
+                              return loser ? (
+                                <div className="flex items-center justify-between px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/30">
+                                  <span className="text-red-400 font-bold text-sm">💀</span>
+                                  <span className="text-white font-semibold text-sm">{loser.username}</span>
+                                  <span className="text-red-400 text-xs">Bhabhi</span>
+                                </div>
+                              ) : null;
+                            })()}
+                          </div>
+
+                          {/* My result */}
                           {gameState.loserId === myUser.id ? (
-                            <p className="text-slate-300 mb-2 text-sm sm:text-base">
-                              You got the <span className="font-bold text-red-400">Thulla</span> — better luck next time!
-                            </p>
+                            <p className="text-slate-300 mb-2 text-sm">You got the <span className="font-bold text-red-400">Thulla</span> 😢</p>
                           ) : gameState.winnerOrder.includes(myUser.id) ? (
-                            <p className="text-slate-300 mb-2 text-sm sm:text-base">
-                              You went out safely! <span className="font-bold text-emerald-400">Nice play.</span>
-                            </p>
+                            <p className="text-slate-300 mb-2 text-sm">You went out safely! <span className="font-bold text-emerald-400">Nice play 🎉</span></p>
                           ) : null}
-                          <p className="text-slate-300 mb-6 text-sm sm:text-base">
-                            Loser (Thulla Receiver):{' '}
-                            <span className="font-bold text-white">
-                              {gameState.players.find(p => p.id === gameState.loserId)?.username}
-                            </span>
-                          </p>
-                          <button
-                            onClick={() => leaveRoom(gameState.roomId)}
-                            className="px-8 py-3 btn-primary text-black font-bold rounded-xl text-sm"
-                          >
-                            Return to Lobby
-                          </button>
+
+                          {/* Ready count for Play Again */}
+                          {(() => {
+                            const readyCount = gameState.players.filter(p => p.isReadyForNext).length;
+                            const totalCount = gameState.players.filter(p => !p.isBot).length;
+                            return readyCount > 0 ? (
+                              <p className="text-xs text-slate-400 mb-3">
+                                <span className="text-amber-400 font-bold">{readyCount}/{totalCount}</span> players ready for next match
+                              </p>
+                            ) : null;
+                          })()}
+
+                          {/* Action buttons */}
+                          <div className="flex gap-3 mt-2">
+                            {!gameState.isBotRoom && (
+                              <button
+                                onClick={playAgainReady}
+                                disabled={!!gameState.players.find(p => p.id === myUser.id)?.isReadyForNext}
+                                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-emerald-600/25"
+                              >
+                                {gameState.players.find(p => p.id === myUser.id)?.isReadyForNext ? '✓ Ready!' : '▶ Play Again'}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => leaveRoom(gameState.roomId)}
+                              className="px-6 py-3 border border-white/10 text-slate-300 hover:bg-white/5 font-bold rounded-xl text-sm transition-all"
+                            >
+                              Leave Room
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -793,15 +879,23 @@ function GameAppContent() {
           isOpen={true}
           requesterName={takeRequest.requesterName}
           targetName={myUser?.username || ''}
-          onAccept={() => {
-            respondTakeCards(takeRequest.requesterId, true);
-            setTakeRequest(null);
-          }}
-          onDecline={() => {
-            respondTakeCards(takeRequest.requesterId, false);
-            setTakeRequest(null);
-          }}
-          onClose={() => setTakeRequest(null)}
+          onAccept={() => respondTakeCards(takeRequest.requesterId, true)}
+          onDecline={() => respondTakeCards(takeRequest.requesterId, false)}
+          onClose={() => respondTakeCards(takeRequest.requesterId, false)}
+        />
+      )}
+
+      {/* Trade Request Modal */}
+      {tradeRequest && (
+        <TradeRequestModal
+          requesterName={tradeRequest.requesterName}
+          offeredCardId={tradeRequest.offeredCardId}
+          requestedCardId={tradeRequest.requestedCardId}
+          offeredCard={(tradeRequest as any).offeredCard}
+          requestedCard={(tradeRequest as any).requestedCard}
+          onAccept={() => respondTradeCards(tradeRequest.targetId, true)}
+          onDecline={() => respondTradeCards(tradeRequest.targetId, false)}
+          onClose={() => respondTradeCards(tradeRequest.targetId, false)}
         />
       )}
     </main>

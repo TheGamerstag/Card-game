@@ -11,6 +11,7 @@ export interface Player {
     avatar?: string;
     cards: Card[];
     isReady: boolean;
+    isReadyForNext?: boolean;
     leftGame: boolean;
     isBot?: boolean;
 }
@@ -31,4 +32,9 @@ export interface GameState {
     isBotRoom?: boolean;
     lastCompletedTrick: PlayAction[] | null;
     pendingTakeRequests?: Record<string, string>;
+    pendingTradeRequests?: Record<string, {
+        requesterId: string;
+        offeredCardId: number;
+        requestedCardId: number;
+    }>;
 }
