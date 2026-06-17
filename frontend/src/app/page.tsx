@@ -347,9 +347,9 @@ function GameAppContent() {
         </div>
       ) : (
         /* Play tab container */
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex overflow-hidden" style={{height: 'calc(100vh - 4rem)'}}>
           {!gameState ? (
-            <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8">
+            <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 overflow-y-auto">
               <div className="w-full max-w-2xl mb-6 sm:mb-8 text-center">
                 <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Welcome back, {myUser.username}</h2>
                 <p className="text-slate-400 text-xs sm:text-sm">Create a room, join friends, or sharpen your skills against CPU.</p>
@@ -436,12 +436,12 @@ function GameAppContent() {
             </div>
           ) : (
             /* Inside Game Room Layout */
-            <div className="flex-1 flex relative overflow-hidden">
+            <div className="flex-1 flex h-full overflow-hidden">
               
               {/* Left Column: Room Game Table */}
-              <div className="flex-1 flex flex-col relative overflow-hidden">
+              <div className="flex-1 flex flex-col h-full overflow-hidden">
                 {gameState.status === 'LOBBY' ? (
-                  <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8">
+                  <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 overflow-y-auto min-h-0">
                     <div className="glass-panel-elevated max-w-md w-full p-6 sm:p-8 rounded-2xl text-center space-y-6">
                       <div className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Room Code</div>
                       <div className="text-3xl sm:text-4xl font-extrabold tracking-widest text-amber-400 font-mono bg-black/40 py-4 rounded-xl border border-amber-500/20">
@@ -540,33 +540,31 @@ function GameAppContent() {
                   </div>
                 ) : (
                   /* PLAYING Game Stage: Server Authoritative Felt Table */
-                  <div className="flex-1 flex flex-col felt-table relative overflow-hidden">
+                  <div className="flex-1 flex flex-col felt-table relative overflow-hidden min-h-0">
                     
-                    {/* Floating Last Completed Trick Panel */}
+                    {/* Last Completed Trick — inline bar, visible on all screens */}
                     {gameState.lastCompletedTrick && gameState.lastCompletedTrick.length > 0 && (
-                      <div className="absolute left-4 top-24 z-10 w-44 bg-black/60 border border-white/10 rounded-xl p-3 shadow-xl backdrop-blur-md hidden sm:block">
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-                          Last Completed Trick
-                        </div>
-                        <div className="flex flex-wrap gap-2 justify-center">
+                      <div className="mx-3 mt-2 mb-0 bg-black/50 border border-white/10 rounded-xl px-3 py-2 flex items-center gap-3 overflow-x-auto no-scrollbar">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap flex-shrink-0">
+                          Last Trick
+                        </span>
+                        <div className="flex items-center gap-2 flex-shrink-0">
                           {gameState.lastCompletedTrick.map((act) => {
                             const player = gameState.players.find(p => p.id === act.playerId);
+                            const isRed = act.card.suit === 'HEARTS' || act.card.suit === 'DIAMONDS';
+                            const suitSymbol = act.card.suit === 'SPADES' ? '♠' : act.card.suit === 'HEARTS' ? '♥' : act.card.suit === 'DIAMONDS' ? '♦' : '♣';
                             return (
-                              <div key={act.card.id} className="flex flex-col items-center">
-                                {/* Small Mini Card representation */}
-                                <div className="w-8 h-12 rounded border bg-zinc-100 flex flex-col justify-between p-0.5 text-zinc-950 font-bold select-none text-[8px] leading-none">
-                                  <div className="flex justify-between">
-                                    <span>{act.card.code.slice(0, -1)}</span>
-                                    <span className={act.card.suit === 'HEARTS' || act.card.suit === 'DIAMONDS' ? 'text-rose-500' : 'text-zinc-900'}>
-                                      {act.card.suit === 'SPADES' ? '♠' : act.card.suit === 'HEARTS' ? '♥' : act.card.suit === 'DIAMONDS' ? '♦' : '♣'}
-                                    </span>
-                                  </div>
-                                  <div className="text-center text-[10px] leading-none">
-                                    {act.card.suit === 'SPADES' ? '♠' : act.card.suit === 'HEARTS' ? '♥' : act.card.suit === 'DIAMONDS' ? '♦' : '♣'}
-                                  </div>
+                              <div key={act.card.id} className="flex flex-col items-center gap-0.5">
+                                <div className="w-7 h-10 rounded bg-zinc-100 border border-zinc-300 flex flex-col justify-between p-0.5 select-none">
+                                  <span className={`text-[8px] font-bold leading-none ${isRed ? 'text-rose-600' : 'text-zinc-900'}`}>
+                                    {act.card.code.slice(0, -1)}
+                                  </span>
+                                  <span className={`text-[10px] text-center leading-none ${isRed ? 'text-rose-600' : 'text-zinc-900'}`}>
+                                    {suitSymbol}
+                                  </span>
                                 </div>
-                                <span className="text-[8px] text-slate-400 mt-1 max-w-[40px] truncate text-center">
-                                  {player?.username}
+                                <span className="text-[7px] text-slate-500 max-w-[28px] truncate text-center">
+                                  {player?.username?.slice(0, 4)}
                                 </span>
                               </div>
                             );
@@ -613,7 +611,7 @@ function GameAppContent() {
                     </div>
 
                     {/* Center: Trick arena / Felt board */}
-                    <div className="flex-1 flex flex-col items-center justify-center relative p-4">
+                    <div className="flex-1 flex flex-col items-center justify-center relative p-2 sm:p-4 min-h-0 overflow-hidden">
                       <div className="text-center mb-4 z-10">
                         {gameState.currentSuit ? (
                           <div className="text-xs uppercase tracking-wider text-slate-400 bg-black/40 px-3 py-1.5 rounded-full border border-white/5">
@@ -711,7 +709,7 @@ function GameAppContent() {
                     </div>
 
                     {/* Bottom: Player's own hand */}
-                    <div className="bg-black/60 border-t border-white/5 p-4 sm:p-6 flex flex-col items-center backdrop-blur-sm relative z-20">
+                    <div className="bg-black/60 border-t border-white/5 px-2 py-3 sm:p-6 flex flex-col items-center backdrop-blur-sm relative z-20 flex-shrink-0">
                       <div className="flex items-center justify-between w-full max-w-4xl mb-3">
                         <div className="text-xs sm:text-sm font-semibold flex items-center gap-2">
                           <span>Your Hand</span>
@@ -779,7 +777,7 @@ function GameAppContent() {
               <div
                 className={`
                   fixed inset-y-0 right-0 z-50 w-80 bg-zinc-950 border-l border-white/10 flex flex-col transition-transform duration-300 shadow-2xl
-                  lg:static lg:translate-x-0 lg:shadow-none lg:w-80 lg:border-l lg:border-white/5 lg:bg-black/40 lg:backdrop-blur-sm
+                  lg:relative lg:inset-auto lg:translate-x-0 lg:shadow-none lg:w-72 xl:w-80 lg:border-l lg:border-white/5 lg:bg-black/40 lg:backdrop-blur-sm lg:h-full lg:min-h-0
                   ${isChatOpen ? 'translate-x-0' : 'translate-x-full'}
                 `}
               >
@@ -806,7 +804,7 @@ function GameAppContent() {
                 </div>
 
                 {/* Chat Message Scroll */}
-                <div className="flex-1 p-4 overflow-y-auto space-y-3">
+                <div className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3">
                   {chatMessages.map((msg, index) => (
                     <div key={index} className="text-sm">
                       <span className={`font-bold mr-1.5 ${msg.sender === 'System' ? 'text-amber-400' : 'text-emerald-400'}`}>
