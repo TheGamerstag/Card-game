@@ -185,6 +185,7 @@ export function resolvePlay(
     }
 
     // Lead suit stays or reset? Trick is ended, the receiver will lead the next trick
+    gameState.lastCompletedTrick = [...gameState.trickCards];
     gameState.trickCards = [];
     gameState.currentSuit = null;
 
@@ -210,6 +211,7 @@ export function resolvePlay(
       }
 
       trickWinnerId = winnerId;
+      gameState.lastCompletedTrick = [...gameState.trickCards];
       gameState.trickCards = [];
       gameState.currentSuit = null;
 

@@ -131,6 +131,7 @@ function resolvePlay(gameState, playerId, playedCard) {
             receiver.leftGame = false;
             gameState.winnerOrder = gameState.winnerOrder.filter(id => id !== receiverId);
         }
+        gameState.lastCompletedTrick = [...gameState.trickCards];
         gameState.trickCards = [];
         gameState.currentSuit = null;
         nextTurnIndex = gameState.players.findIndex(p => p.id === receiverId);
@@ -149,6 +150,7 @@ function resolvePlay(gameState, playerId, playedCard) {
                 }
             }
             trickWinnerId = winnerId;
+            gameState.lastCompletedTrick = [...gameState.trickCards];
             gameState.trickCards = [];
             gameState.currentSuit = null;
             nextTurnIndex = gameState.players.findIndex(p => p.id === winnerId);

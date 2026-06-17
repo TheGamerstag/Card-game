@@ -35,4 +35,5 @@ export interface GameState {
   loserId: string | null;
   winnerOrder: string[];
   isBotRoom?: boolean;
+  lastCompletedTrick: PlayAction[] | null;
 }

@@ -165,6 +165,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         trickCards: [],
         loserId: null,
         winnerOrder: [],
+        lastCompletedTrick: null,
       };
     }
 
@@ -272,6 +273,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       loserId: null,
       winnerOrder: [],
       isBotRoom: true,
+      lastCompletedTrick: null,
     };
 
     const room = this.rooms[roomId];
@@ -314,6 +316,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     room.loserId = null;
     room.trickCards = [];
     room.currentSuit = null;
+    room.lastCompletedTrick = null;
 
     // Find the player holding Ace of Spades (starts the trick)
     const starterIdx = findAceOfSpadesPlayerIndex(room.players);

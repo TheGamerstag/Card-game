@@ -411,6 +411,15 @@ function GameAppContent() {
                   </button>
                 </div>
               </div>
+
+              {/* Lobby Screen Ad Slot */}
+              <div className="w-full max-w-2xl mt-6 px-4 sm:px-0">
+                <div className="text-[9px] font-bold text-slate-500 tracking-wider text-center uppercase mb-1.5">Sponsored Advertisement</div>
+                {/* Google AdSense tag container: replace/wrap with your <ins className="adsbygoogle" ...> inside */}
+                <div className="w-full h-20 rounded-xl bg-black/40 border border-dashed border-white/10 flex flex-col items-center justify-center text-slate-500 text-[10px] font-semibold tracking-wide uppercase shadow-inner">
+                  <span>AdSense Banner Area (728x90 Responsive)</span>
+                </div>
+              </div>
             </div>
           ) : (
             /* Inside Game Room Layout */
@@ -461,6 +470,39 @@ function GameAppContent() {
                 ) : (
                   /* PLAYING Game Stage: Server Authoritative Felt Table */
                   <div className="flex-1 flex flex-col felt-table relative overflow-hidden">
+                    
+                    {/* Floating Last Completed Trick Panel */}
+                    {gameState.lastCompletedTrick && gameState.lastCompletedTrick.length > 0 && (
+                      <div className="absolute left-4 top-24 z-10 w-44 bg-black/60 border border-white/10 rounded-xl p-3 shadow-xl backdrop-blur-md hidden sm:block">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                          Last Completed Trick
+                        </div>
+                        <div className="flex flex-wrap gap-2 justify-center">
+                          {gameState.lastCompletedTrick.map((act) => {
+                            const player = gameState.players.find(p => p.id === act.playerId);
+                            return (
+                              <div key={act.card.id} className="flex flex-col items-center">
+                                {/* Small Mini Card representation */}
+                                <div className="w-8 h-12 rounded border bg-zinc-100 flex flex-col justify-between p-0.5 text-zinc-950 font-bold select-none text-[8px] leading-none">
+                                  <div className="flex justify-between">
+                                    <span>{act.card.code.slice(0, -1)}</span>
+                                    <span className={act.card.suit === 'HEARTS' || act.card.suit === 'DIAMONDS' ? 'text-rose-500' : 'text-zinc-900'}>
+                                      {act.card.suit === 'SPADES' ? '♠' : act.card.suit === 'HEARTS' ? '♥' : act.card.suit === 'DIAMONDS' ? '♦' : '♣'}
+                                    </span>
+                                  </div>
+                                  <div className="text-center text-[10px] leading-none">
+                                    {act.card.suit === 'SPADES' ? '♠' : act.card.suit === 'HEARTS' ? '♥' : act.card.suit === 'DIAMONDS' ? '♦' : '♣'}
+                                  </div>
+                                </div>
+                                <span className="text-[8px] text-slate-400 mt-1 max-w-[40px] truncate text-center">
+                                  {player?.username}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                     
                     {/* Top: Opponent status bars */}
                     <div className="h-24 flex items-center justify-start sm:justify-center gap-4 p-4 overflow-x-auto max-w-full no-scrollbar">
@@ -664,6 +706,15 @@ function GameAppContent() {
                   <div ref={chatEndRef} />
                 </div>
 
+                {/* Sidebar Ad Slot */}
+                <div className="p-3 border-t border-slate-900 bg-black/20">
+                  <div className="text-[8px] font-bold text-slate-500 tracking-wider text-center uppercase mb-1">Sponsored</div>
+                  {/* Google AdSense tag container: replace/wrap with your <ins className="adsbygoogle" ...> inside */}
+                  <div className="w-full h-24 rounded-lg bg-zinc-950/80 border border-dashed border-white/5 flex flex-col items-center justify-center text-slate-600 text-[9px] font-semibold uppercase">
+                    <span>Responsive Ad Slot</span>
+                  </div>
+                </div>
+
                 {/* Chat controls & Quick reactions */}
                 <div className="p-4 border-t border-slate-900 space-y-3">
                   <div className="flex justify-between">
@@ -701,6 +752,15 @@ function GameAppContent() {
       )}
 
       <SiteFooter />
+
+      {/* Persistent Bottom Page Ad Slot */}
+      <div className="w-full border-t border-white/5 bg-black/60 py-4 flex flex-col items-center justify-center">
+        <div className="text-[9px] font-bold text-slate-600 tracking-wider uppercase mb-1.5">Sponsored Advertisement</div>
+        {/* Google AdSense tag container: replace/wrap with your <ins className="adsbygoogle" ...> inside */}
+        <div className="w-full max-w-4xl h-20 rounded-lg bg-black/40 border border-dashed border-white/10 flex flex-col items-center justify-center text-slate-600 text-[10px] font-semibold uppercase mx-4 shadow-inner">
+          <span>Responsive Ad Banner (Horizontal Layout)</span>
+        </div>
+      </div>
     </main>
   );
 }

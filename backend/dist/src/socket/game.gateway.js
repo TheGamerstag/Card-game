@@ -128,6 +128,7 @@ let GameGateway = class GameGateway {
                 trickCards: [],
                 loserId: null,
                 winnerOrder: [],
+                lastCompletedTrick: null,
             };
         }
         const room = this.rooms[roomId];
@@ -214,6 +215,7 @@ let GameGateway = class GameGateway {
             loserId: null,
             winnerOrder: [],
             isBotRoom: true,
+            lastCompletedTrick: null,
         };
         const room = this.rooms[roomId];
         (0, game_engine_1.dealCards)(room.players);
@@ -248,6 +250,7 @@ let GameGateway = class GameGateway {
         room.loserId = null;
         room.trickCards = [];
         room.currentSuit = null;
+        room.lastCompletedTrick = null;
         const starterIdx = (0, game_engine_1.findAceOfSpadesPlayerIndex)(room.players);
         room.currentTurn = starterIdx !== -1 ? starterIdx : 0;
         this.server.to(clientData.roomId).emit('roomUpdated', room);

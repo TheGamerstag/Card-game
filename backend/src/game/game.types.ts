@@ -35,4 +35,5 @@ export interface GameState {
   loserId: string | null;    // the player who lost (last remaining player)
   winnerOrder: string[];     // order in which players completed all cards
   isBotRoom?: boolean;
+  lastCompletedTrick: PlayAction[] | null;
 }
